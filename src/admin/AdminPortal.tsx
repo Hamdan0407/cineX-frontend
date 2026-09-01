@@ -4,7 +4,7 @@ import "./Admin.css";
 import { Pagination } from "../components/Pagination";
 import { toast } from "sonner";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 const IMG_BASE_URL = "https://image.tmdb.org/t/p/w185";
 
 interface AdminPortalProps {

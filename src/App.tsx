@@ -16,7 +16,8 @@ import { AdminPortal } from "./admin/AdminPortal";
 
 const IMG_BASE_URL     = "https://image.tmdb.org/t/p/w500";
 const IMG_ORIGINAL_URL = "https://image.tmdb.org/t/p/original";
-const API_BASE         = import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
+// Use the Nginx same-origin proxy in production; local .env.local may override this.
+const API_BASE         = import.meta.env.VITE_API_BASE_URL || "";
 
 // ── Language Helper ────────────────────────────────────────────────────────────
 const LANG_LABEL: Record<string, string> = {
@@ -42,6 +43,27 @@ const getGenres = (ids?: number[]) => {
   if (!ids || ids.length === 0) return "Cinema • Feature";
   return ids.slice(0, 3).map(id => GENRE_MAP[id] || "Drama").join(" • ");
 };
+
+type CineXShow = {
+  id: number;
+  movieId: number;
+  screenId: number;
+  showTime: string;
+  showDate: string;
+  price: number;
+  availableSeats: number;
+};
+
+type CineXSeat = {
+  seatId: number;
+  seatNumber: string;
+  seatType: string;
+  status: "AVAILABLE" | "BOOKED";
+  price: number;
+};
+
+type CineXScreen = { id: number; screenName: string; theatreId: number };
+type CineXTheatre = { id: number; name: string; city: string };
 const getGenreList = (ids?: number[]) => {
   if (!ids || ids.length === 0) return ["Drama", "Cinema"];
   return ids.slice(0, 4).map(id => GENRE_MAP[id] || "Drama");
@@ -95,11 +117,8 @@ const THEATRES_DB: Record<string, Array<{
   ],
 };
 
-const getNumericSeatId = (seatName: string) => {
-  const row = seatName.charCodeAt(0) - 64;
-  const col = parseInt(seatName.slice(1)) || 1;
-  return row * 100 + col;
-};
+// Retained only for any non-customer demo surfaces; customer booking uses API data below.
+void THEATRES_DB;
 
 export default function App() {
   const { isSignedIn, user } = useUser();
@@ -124,11 +143,20 @@ export default function App() {
 
   // UI overlays & Modals
   const [currentMovie,   setCurrentMovie]   = useState<any>(null);
+  const [shows,          setShows]          = useState<CineXShow[]>([]);
+  const [showsLoading,   setShowsLoading]   = useState(false);
+  const [showsError,     setShowsError]     = useState("");
+  const [selectedShow,   setSelectedShow]   = useState<CineXShow | null>(null);
+  const [showSeats,      setShowSeats]      = useState<CineXSeat[]>([]);
+  const [seatsLoading,   setSeatsLoading]   = useState(false);
+  const [screens,        setScreens]        = useState<CineXScreen[]>([]);
+  const [theatres,       setTheatres]       = useState<CineXTheatre[]>([]);
   const [isDetailOpen,   setIsDetailOpen]   = useState(false);
   const [isSeatOpen,     setIsSeatOpen]     = useState(false);
   const [currentTheatre, setCurrentTheatre] = useState("");
   const [currentTime,    setCurrentTime]    = useState("");
-  const [selectedSeats,  setSelectedSeats]  = useState<Array<{ id: string; price: number }>>([]);
+  const [currentShowId,  setCurrentShowId]  = useState<number | null>(null);
+  const [selectedSeats,  setSelectedSeats]  = useState<Array<{ id: string; price: number; seatId?: number }>>([]);
   const [liveSeatStatus, setLiveSeatStatus] = useState<Record<string, { status: 'HELD' | 'BOOKED' | 'AVAILABLE'; userId?: string }>>({});
   const stompClientRef = useRef<Client | null>(null);
 
@@ -224,7 +252,31 @@ export default function App() {
   const handleMovieClick = (movie: any) => {
     if (!movie) return;
     setCurrentMovie(movie);
+    setSelectedShow(null);
+    setShows([]);
+    setShowsError("");
+    setShowsLoading(true);
     setIsDetailOpen(true);
+    Promise.all([
+      axios.get(`${API_BASE}/api/movies`),
+      axios.get(`${API_BASE}/api/screens`),
+      axios.get(`${API_BASE}/api/theatres`),
+    ]).then(([moviesRes, screensRes, theatresRes]) => {
+      const backendMovie = (moviesRes.data || []).find((item: any) =>
+        item.title?.trim().toLowerCase() === movie.title?.trim().toLowerCase()
+      );
+      setScreens(screensRes.data || []);
+      setTheatres(theatresRes.data || []);
+      if (!backendMovie?.id) {
+        setShowsError("No CineX shows are scheduled for this movie yet.");
+        return null;
+      }
+      return axios.get(`${API_BASE}/api/shows/movie/${backendMovie.id}`);
+    }).then((showsRes) => {
+      if (showsRes?.data) setShows(showsRes.data);
+    }).catch(() => {
+      setShowsError("Unable to load showtimes. Please try again.");
+    }).finally(() => setShowsLoading(false));
     if (location.pathname !== "/" && location.pathname !== "/movies") {
       navigate("/");
     }
@@ -236,22 +288,34 @@ export default function App() {
     setCurrentMovie(null);
   };
 
-  const openSeats = (theatre: string, time: string) => {
+  const openSeats = (show: CineXShow) => {
     if (!isSignedIn) {
       openSignIn();
       return;
     }
-    setCurrentTheatre(theatre);
-    setCurrentTime(time);
+    const screen = screens.find(item => item.id === show.screenId);
+    const theatre = screen ? theatres.find(item => item.id === screen.theatreId) : undefined;
+    setSelectedShow(show);
+    setCurrentShowId(show.id);
+    setCurrentTheatre(theatre?.name || "Theatre");
+    setCurrentTime(show.showTime);
+    setShowSeats([]);
+    setSeatsLoading(true);
     setSelectedSeats([]);
     setIsSeatOpen(true);
+    axios.get(`${API_BASE}/api/shows/${show.id}/seats`)
+      .then(res => setShowSeats(res.data || []))
+      .catch(() => toast.error("Unable to load seats for this show."))
+      .finally(() => setSeatsLoading(false));
   };
 
   const closeSeats = () => {
     if (selectedSeats.length > 0) {
-      const showIdVal = currentMovie?.id ? Number(currentMovie.id) : 101;
+      const showIdVal = currentShowId;
       const clerkId = user ? user.id : "guest_user";
-      const numIds = selectedSeats.map(s => getNumericSeatId(s.id));
+      if (showIdVal == null) return;
+      const numIds = selectedSeats.map(s => s.seatId).filter((id): id is number => typeof id === "number");
+      if (numIds.length === 0) return;
       axios.delete(`${API_BASE}/api/shows/${showIdVal}/seats/lock`, {
         data: { showId: showIdVal, seatIds: numIds, userId: clerkId, action: "RELEASE" }
       }).catch(() => {});
@@ -268,15 +332,16 @@ export default function App() {
       return;
     }
 
-    const showIdVal = currentMovie?.id ? Number(currentMovie.id) : 101;
+    const showIdVal = currentShowId;
+    if (showIdVal == null) return;
 
     // Fetch initially held seats via REST
     axios.get(`${API_BASE}/api/shows/${showIdVal}/seats/held`)
       .then(res => {
         if (Array.isArray(res.data)) {
           const initialMap: Record<string, { status: 'HELD' | 'BOOKED' | 'AVAILABLE'; userId?: string }> = {};
-          res.data.forEach((s: any) => {
-            if (s.seatId) initialMap[s.seatId] = { status: s.status || 'HELD', userId: s.userId };
+          res.data.forEach((seatId: number) => {
+            initialMap[String(seatId)] = { status: 'HELD' };
           });
           setLiveSeatStatus(initialMap);
         }
@@ -284,7 +349,7 @@ export default function App() {
       .catch(() => {});
 
     // Connect to WebSocket via SockJS
-    const socket = new SockJS(`${API_BASE}/ws`);
+    const socket = new SockJS(`${API_BASE}/ws/seats`);
     const client = new Client({
       webSocketFactory: () => socket,
       reconnectDelay: 5000,
@@ -321,12 +386,20 @@ export default function App() {
         stompClientRef.current = null;
       }
     };
-  }, [isSeatOpen, currentMovie]);
+  }, [isSeatOpen, currentMovie, currentShowId]);
 
-  const toggleSeat = (id: string, price: number) => {
-    const numId = getNumericSeatId(id);
-    const showIdVal = currentMovie?.id ? Number(currentMovie.id) : 101;
+  const toggleSeat = (id: string, price: number, seatId?: number) => {
+    if (seatId == null) {
+      toast.info("This seat does not have a backend seat ID yet.");
+      return;
+    }
+    const numId = seatId;
+    const showIdVal = currentShowId;
     const clerkId = user ? user.id : "guest_user";
+    if (showIdVal == null) {
+      toast.info("Real show selection is not available yet.");
+      return;
+    }
     const isCurrentlySelected = selectedSeats.some(s => s.id === id);
 
     if (isCurrentlySelected) {
@@ -339,21 +412,25 @@ export default function App() {
         showId: showIdVal, seatIds: [numId], userId: clerkId, action: "SELECT"
       }).then(res => {
         if (res.data === true || res.status === 200) {
-          setSelectedSeats(prev => [...prev, { id, price }]);
+          setSelectedSeats(prev => [...prev, { id, price, seatId }]);
         }
       }).catch(err => {
         if (err.response?.status === 409) {
           toast.warning("Seat Unavailable", { description: `Seat ${id} is currently held by another user. Please choose another seat.` });
         } else {
-          setSelectedSeats(prev => [...prev, { id, price }]);
+          toast.error("Seat lock failed. Please try again.");
         }
+        axios.get(`${API_BASE}/api/shows/${showIdVal}/seats`)
+          .then(res => setShowSeats(res.data || []))
+          .catch(() => {});
       });
     }
   };
 
-  const getSeatStatusClass = (id: string, hardcodedBooked: boolean) => {
-    const numId = getNumericSeatId(id);
+  const getSeatStatusClass = (id: string, hardcodedBooked: boolean, seatId?: number, backendStatus?: string) => {
+    const numId = seatId == null ? id : String(seatId);
     const liveInfo = liveSeatStatus[numId] || liveSeatStatus[id];
+    if (backendStatus === 'BOOKED') return 'booked';
     if (liveInfo && liveInfo.status === 'BOOKED') return 'booked';
     if (liveInfo && liveInfo.status === 'HELD' && liveInfo.userId !== (user ? user.id : "guest_user")) return 'held';
     if (hardcodedBooked) return 'booked';
@@ -361,14 +438,20 @@ export default function App() {
     return '';
   };
 
-  const isSeatDisabled = (id: string, hardcodedBooked: boolean) => {
-    const numId = getNumericSeatId(id);
+  const isSeatDisabled = (id: string, hardcodedBooked: boolean, seatId?: number, backendStatus?: string) => {
+    const numId = seatId == null ? id : String(seatId);
     const liveInfo = liveSeatStatus[numId] || liveSeatStatus[id];
+    if (backendStatus === 'BOOKED') return true;
     if (liveInfo && (liveInfo.status === 'BOOKED' || (liveInfo.status === 'HELD' && liveInfo.userId !== (user ? user.id : "guest_user")))) return true;
     return hardcodedBooked;
   };
 
   const totalPrice = selectedSeats.reduce((acc, s) => acc + s.price, 0);
+  const seatsByRow = showSeats.reduce<Record<string, CineXSeat[]>>((rows, seat) => {
+    const row = seat.seatNumber.match(/^[A-Za-z]+/)?.[0] || "Seats";
+    (rows[row] ||= []).push(seat);
+    return rows;
+  }, {});
 
   const selectCity = (city: string) => {
     setCurrentCity(city);
@@ -394,21 +477,29 @@ export default function App() {
     const clerkUserId = user ? user.id : "guest_" + Math.floor(Math.random() * 100000);
     const reqBody = {
       clerkUserId: clerkUserId,
-      movieId: currentMovie?.id || 1,
+      showId: currentShowId,
+      seatIds: selectedSeats
+        .map(seat => seat.seatId)
+        .filter((seatId): seatId is number => typeof seatId === "number"),
       movieTitle: currentMovie?.title || "Movie",
       posterPath: currentMovie?.poster_path ? `${IMG_BASE_URL}${currentMovie.poster_path}` : "",
       theatreName: currentTheatre || "CineX Theatre",
       cityName: currentCity || "Chennai",
       showDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
       showTime: currentTime || "Now",
-      seatNames: selectedSeats.map(s => s.id),
       amount: totalPrice
     };
+
+    if (currentShowId == null || reqBody.seatIds.length === 0) {
+      setPaymentError("Select a real show and seats before booking.");
+      setProcessing(false);
+      return;
+    }
 
     // Step 1: Create initial booking in database (PENDING_PAYMENT)
     axios.post(`${API_BASE}/api/bookings`, reqBody)
       .then(res => {
-        const bookingId = res.data.id;
+        const bookingId = res.data.bookingId;
         // Step 2: Create Razorpay Order on backend
         return axios.post(`${API_BASE}/api/payments/create-order`, {
           bookingId: bookingId,
@@ -417,7 +508,7 @@ export default function App() {
           const orderData = orderRes.data;
           
           const options = {
-            key: orderData.keyId || "rzp_test_TAG6wbNf35AKL4",
+            key: orderData.keyId,
             amount: orderData.amountInPaise,
             currency: orderData.currency || "INR",
             name: orderData.name || "CineX",
@@ -489,8 +580,6 @@ export default function App() {
         setProcessing(false);
       });
   };
-
-  const theatres = THEATRES_DB[currentCity] ?? THEATRES_DB["Chennai"];
 
   if (isAdminOpen) {
     return <AdminPortal onExit={() => setIsAdminOpen(false)} userEmail={user?.primaryEmailAddress?.emailAddress} />;
@@ -894,28 +983,32 @@ export default function App() {
               </div>
 
               <div className="theatres-list">
-                {theatres.map(t => (
-                  <div key={t.name} className="theatre-card">
-                    <div className="theatre-info">
-                      <h3>
-                        <span>🎥</span> {t.name}
-                      </h3>
-                      <p>{t.features} • <span style={{ color: "var(--primary)", fontWeight: 600 }}>{t.distance}</span></p>
-                    </div>
-                    <div className="showtimes-list">
-                      {t.times.map(slot => (
+                {showsLoading && <p style={{ color: "var(--text-muted)" }}>Loading real showtimes...</p>}
+                {!showsLoading && showsError && <p style={{ color: "var(--text-muted)" }}>{showsError}</p>}
+                {!showsLoading && !showsError && shows.length === 0 && <p style={{ color: "var(--text-muted)" }}>No shows available for this movie.</p>}
+                {shows.map(show => {
+                  const screen = screens.find(item => item.id === show.screenId);
+                  const theatre = screen ? theatres.find(item => item.id === screen.theatreId) : undefined;
+                  const isSelected = selectedShow?.id === show.id;
+                  return (
+                    <div key={show.id} className="theatre-card">
+                      <div className="theatre-info">
+                        <h3><span>🎥</span> {theatre?.name || "CineX Theatre"}</h3>
+                        <p>{theatre?.city || "Location unavailable"} • {screen?.screenName || `Screen ${show.screenId}`}</p>
+                        <p style={{ color: "var(--text-muted)" }}>Show ID: {show.id} • {show.availableSeats} seats available</p>
+                      </div>
+                      <div className="showtimes-list">
                         <div
-                          key={slot.t}
-                          className={`showtime-pill ${slot.s === "fast-filling" || slot.s === "almost-full" ? "fast-filling" : ""}`}
-                          onClick={() => openSeats(t.name, slot.t)}
+                          className={`showtime-pill ${isSelected ? "fast-filling" : ""}`}
+                          onClick={() => openSeats(show)}
                         >
-                          <span className="showtime-time">{slot.t}</span>
-                          <span className="showtime-type">{slot.type} • {slot.s === "almost-full" ? "Almost Full" : slot.s === "fast-filling" ? "Filling Fast" : "Available"}</span>
+                          <span className="showtime-time">{show.showTime}</span>
+                          <span className="showtime-type">{show.showDate} • ₹{show.price}</span>
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </>
@@ -944,7 +1037,33 @@ export default function App() {
             <span className="legend-item"><div className="legend-box booked" /> Booked / Sold</span>
           </div>
 
-          <div className="seating-chart">
+          {seatsLoading && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>Loading real seats...</p>}
+          {!seatsLoading && showSeats.length === 0 && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>No seats are configured for this show.</p>}
+          {!seatsLoading && showSeats.length > 0 && (
+            <div className="seating-chart">
+              {Object.entries(seatsByRow).map(([row, seats]) => (
+                <div key={row} className="seat-row">
+                  <div className="row-label">{row}</div>
+                  {seats.map(seat => {
+                    const isBooked = seat.status === "BOOKED";
+                    const isHeld = liveSeatStatus[String(seat.seatId)]?.status === "HELD";
+                    const isSelected = selectedSeats.some(item => item.seatId === seat.seatId);
+                    return (
+                      <button
+                        key={seat.seatId}
+                        className={`seat-btn ${seat.seatType?.toLowerCase() || ""} ${isBooked ? "booked" : isHeld ? "held" : isSelected ? "selected" : ""}`}
+                        disabled={isBooked || (isHeld && liveSeatStatus[String(seat.seatId)]?.userId !== (user ? user.id : "guest_user"))}
+                        title={`${seat.seatNumber} • ${seat.seatType} • ₹${seat.price}`}
+                        onClick={() => toggleSeat(seat.seatNumber, seat.price, seat.seatId)}
+                      >{seat.seatNumber}</button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="seating-chart" style={{ display: "none" }}>
             {/* Executive Tier */}
             <div className="seat-tier-section">
               <div className="tier-label">👑 EXECUTIVE RECLINERS – ₹350</div>
