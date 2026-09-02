@@ -4,6 +4,7 @@ import "./index.css";
 import App from "./App.tsx";
 import { ClerkProvider } from "@clerk/react";
 import { BrowserRouter } from "react-router-dom";
+import { ApiAuthSetup } from "./components/ApiAuthSetup";
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -15,7 +16,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ClerkProvider publishableKey={PUBLISHABLE_KEY} afterSignOutUrl="/">
       <BrowserRouter>
-        <App />
+        <ApiAuthSetup>
+          <App />
+        </ApiAuthSetup>
       </BrowserRouter>
     </ClerkProvider>
   </StrictMode>

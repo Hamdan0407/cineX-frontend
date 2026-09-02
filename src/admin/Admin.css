@@ -5,9 +5,9 @@
 .admin-portal {
   display: flex;
   min-height: 100vh;
-  background-color: #080A0E;
+  background-color: #0a0a0a;
   color: #FFFFFF;
-  font-family: var(--font-body);
+  font-family: 'Inter', system-ui, sans-serif;
 }
 
 /* ── Sidebar Navigation ── */
@@ -39,14 +39,14 @@
 }
 
 .admin-logo span {
-  color: var(--primary);
+  color: #e8958c;
 }
 
 .admin-badge {
   font-size: 0.7rem;
-  background: rgba(229, 9, 20, 0.15);
-  color: var(--primary);
-  border: 1px solid rgba(229, 9, 20, 0.3);
+  background: rgba(232, 149, 140, 0.15);
+  color: #e8958c;
+  border: 1px solid rgba(232, 149, 140, 0.3);
   padding: 0.2rem 0.5rem;
   border-radius: 6px;
   font-weight: 700;
@@ -84,9 +84,9 @@
 }
 
 .admin-nav-item.active {
-  background: linear-gradient(135deg, rgba(229, 9, 20, 0.2), rgba(229, 9, 20, 0.05));
+  background: rgba(232, 149, 140, 0.12);
   color: #fff;
-  border-left: 3px solid var(--primary);
+  border-left: 3px solid #e8958c;
   font-weight: 600;
 }
 
