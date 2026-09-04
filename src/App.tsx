@@ -1,6 +1,6 @@
 import { useClerk } from "@clerk/react";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { api, downloadAuthenticatedFile, fetchAuthenticatedBlobUrl, getApiErrorMessage } from "./api/apiClient";
+import { api, downloadAuthenticatedFile, fetchAuthenticatedBlobUrl, getApiBaseUrl, getApiErrorMessage } from "./api/apiClient";
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from "react-router-dom";
@@ -68,7 +68,7 @@ import { isStaleHeldPoll, shouldDropLocalSelection } from "./utils/seatHoldSync"
 import { useDebounce } from "./utils/useDebounce";
 import { searchMoviesBackend } from "./services/cinemaApi";
 
-const API_BASE         = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE         = getApiBaseUrl();
 const CLERK_KEY_OK     = isClerkPublishableKeyValid(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
 const SEAT_SESSION_KEY = "cinex_seat_session";
 const CINEX300_PROMPT_VISIT_KEY = "cinex300_prompt_seen_this_visit";

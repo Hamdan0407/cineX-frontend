@@ -6,7 +6,28 @@ declare module "axios" {
   }
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+/**
+ * A localhost API URL is valid only during local development. If it is baked
+ * into a deployed bundle, use the existing same-origin Nginx proxy instead.
+ */
+export function getApiBaseUrl(
+  configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || "",
+  hostname = typeof window === "undefined" ? "" : window.location.hostname,
+): string {
+  const baseUrl = configuredBaseUrl.trim().replace(/\/$/, "");
+  if (!baseUrl || !hostname) return baseUrl;
+
+  try {
+    const apiHost = new URL(baseUrl).hostname;
+    const isLocalApi = apiHost === "localhost" || apiHost === "127.0.0.1" || apiHost === "::1";
+    const isLocalBrowser = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    return isLocalApi && !isLocalBrowser ? "" : baseUrl;
+  } catch {
+    return baseUrl;
+  }
+}
+
+const API_BASE = getApiBaseUrl();
 
 type TokenGetter = () => Promise<string | null>;
 
