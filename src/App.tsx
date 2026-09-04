@@ -62,7 +62,6 @@ import {
   resolveTrailerPlaybackUrl,
   type BookableMovieDto,
   type TmdbCastMember,
-  type TrailerMediaDto,
 } from "./utils/movieUtils";
 import { isStaleHeldPoll, shouldDropLocalSelection } from "./utils/seatHoldSync";
 import { useDebounce } from "./utils/useDebounce";
@@ -623,9 +622,8 @@ export default function App() {
         return null;
       }),
       fetchTmdbSimilarMovies(tmdbId).catch(() => []),
-      fetchMovieTrailer(tmdbId).catch((): TrailerMediaDto => ({ available: false, tmdbId })),
     ])
-      .then(([tmdbDetails, creditsPayload, similarPayload, trailerPayload]) => {
+      .then(([tmdbDetails, creditsPayload, similarPayload]) => {
         if (tmdbDetails && typeof tmdbDetails === "object") {
           setCurrentMovie((prev: any) => ({
             ...prev,
@@ -634,14 +632,8 @@ export default function App() {
             tmdbId,
             poster_path: (tmdbDetails as any).poster_path ?? prev?.poster_path ?? null,
             backdrop_path: (tmdbDetails as any).backdrop_path ?? prev?.backdrop_path ?? null,
-            trailerPlaybackUrl: trailerPayload?.trailerPlaybackUrl ?? prev?.trailerPlaybackUrl ?? null,
-            trailerObjectKey: trailerPayload?.trailerObjectKey ?? prev?.trailerObjectKey ?? null,
-          }));
-        } else if (trailerPayload?.available) {
-          setCurrentMovie((prev: any) => ({
-            ...prev,
-            trailerPlaybackUrl: trailerPayload.trailerPlaybackUrl ?? null,
-            trailerObjectKey: trailerPayload.trailerObjectKey ?? null,
+            trailerPlaybackUrl: prev?.trailerPlaybackUrl ?? null,
+            trailerObjectKey: prev?.trailerObjectKey ?? null,
           }));
         }
         const { cast, crew } = parseTmdbCredits(creditsPayload);

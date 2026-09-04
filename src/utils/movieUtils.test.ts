@@ -24,6 +24,7 @@ import {
   isCinexObjectKey,
   hasTrailerPlayback,
   hasTmdbBackdrop,
+  getTrailerObjectKeyForTmdbId,
   coerceJsonPayload,
 } from "./movieUtils";
 
@@ -269,6 +270,19 @@ describe("CineX media delivery resolution", () => {
     expect(resolveCinexMediaDeliveryUrl(spiderManTrailerObjectKey)).toBe(
       spiderManTrailerPlaybackUrl,
     );
+  });
+
+  it("attaches the known static key so hero trailers resolve without an API request", () => {
+    const result = buildHeroCarouselMovies([[{ id: 1288445, title: "Mutiny", backdrop_path: "/mutiny.jpg" }]]);
+    expect(result[0].trailerObjectKey).toBe(getTrailerObjectKeyForTmdbId(1288445));
+    expect(resolveTrailerPlaybackUrl({ trailerObjectKey: result[0].trailerObjectKey })).toContain(
+      "trailers/Mutiny%20(2026)%20Official%20Trailer%20-%20Jason%20Statham%20-%20(1080p).mp4",
+    );
+  });
+
+  it("returns no static mapping for titles that must use the backend fallback", () => {
+    expect(getTrailerObjectKeyForTmdbId(999999)).toBeNull();
+    expect(resolveTrailerPlaybackUrl({ trailerObjectKey: getTrailerObjectKeyForTmdbId(999999) })).toBe("");
   });
 
   it("preserves absolute delivery URLs", () => {

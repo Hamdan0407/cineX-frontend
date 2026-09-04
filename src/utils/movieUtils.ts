@@ -1,9 +1,10 @@
 export const IMG_BASE_URL = "https://image.tmdb.org/t/p/w500";
 export const IMG_BACKDROP_URL = "https://image.tmdb.org/t/p/w1280";
 export const IMG_ORIGINAL_URL = "https://image.tmdb.org/t/p/original";
+const DEFAULT_CLOUDFRONT_MEDIA_BASE_URL = "https://d1al8zqo1izqiu.cloudfront.net";
 
 const getCloudfrontMediaBaseUrl = (): string =>
-  (import.meta.env.VITE_CLOUDFRONT_MEDIA_BASE_URL || "").replace(/\/$/, "");
+  (import.meta.env.VITE_CLOUDFRONT_MEDIA_BASE_URL || DEFAULT_CLOUDFRONT_MEDIA_BASE_URL).replace(/\/$/, "");
 
 export { getCloudfrontMediaBaseUrl };
 
@@ -469,6 +470,19 @@ export const HERO_TRAILER_TMDB_IDS: readonly number[] = [
   1368337, // The Odyssey
 ];
 
+/** Static CineX media keys mirrored by the backend trailer mapping. */
+export const TRAILER_OBJECT_KEYS_BY_TMDB_ID: Readonly<Record<number, string>> = {
+  969681: "trailers/SPIDER-MAN_ BRAND NEW DAY – New Trailer (4K).mp4",
+  1003596: "trailers/Avengers_ Doomsday _ Special Look _ In Theaters December 18.mp4",
+  1170608: "trailers/Dune_ Part Three _ Official Teaser Trailer - (1080p).mp4",
+  1288445: "trailers/Mutiny (2026) Official Trailer - Jason Statham - (1080p).mp4",
+  1516698: "trailers/The Last Sunrise - Official Trailer _ Prime Video.mp4",
+  1368337: "trailers/The Odyssey _ Official New Trailer.mp4",
+};
+
+export const getTrailerObjectKeyForTmdbId = (tmdbId: number): string | null =>
+  TRAILER_OBJECT_KEYS_BY_TMDB_ID[tmdbId] ?? null;
+
 /** Builds the homepage hero carousel from TMDB lists, preserving HERO_TRAILER_TMDB_IDS order. */
 export const buildHeroCarouselMovies = (sources: unknown[][]): any[] => {
   const byId = new Map<number, any>();
@@ -480,10 +494,15 @@ export const buildHeroCarouselMovies = (sources: unknown[][]): any[] => {
       byId.set(id, raw);
     }
   }
-  return HERO_TRAILER_TMDB_IDS.map((id) => byId.get(id)).filter((movie): movie is any => {
-    if (!movie) return false;
-    return hasTmdbBackdrop(movie) && !!resolveMovieBackdropUrl(movie);
-  });
+  return HERO_TRAILER_TMDB_IDS.map((id) => byId.get(id))
+    .filter((movie): movie is any => !!movie && hasTmdbBackdrop(movie) && !!resolveMovieBackdropUrl(movie))
+    .map((movie) => {
+      const tmdbId = Number(movie.tmdbId ?? movie.id);
+      return {
+        ...movie,
+        trailerObjectKey: movie.trailerObjectKey ?? getTrailerObjectKeyForTmdbId(tmdbId),
+      };
+    });
 };
 
 export const buildNowShowingDisplay = (
