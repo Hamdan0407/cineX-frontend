@@ -24,6 +24,12 @@ export function configureApiAuth(options: {
   onForbidden = options.onForbidden ?? null;
 }
 
+export function clearApiAuth() {
+  tokenGetter = null;
+  onUnauthorized = null;
+  onForbidden = null;
+}
+
 export const api = axios.create({
   baseURL: API_BASE,
 });
@@ -50,11 +56,15 @@ api.interceptors.response.use(
   (error: AxiosError<{ message?: string }>) => {
     const status = error.response?.status;
     const message = error.response?.data?.message;
+    const skipAuth = error.config?.skipAuth === true;
 
-    if (status === 401) {
-      onUnauthorized?.();
-    } else if (status === 403 && message) {
-      onForbidden?.(message);
+    // Public endpoints opt out of global auth side-effects (e.g. "Session expired" toast).
+    if (!skipAuth) {
+      if (status === 401) {
+        onUnauthorized?.();
+      } else if (status === 403 && message) {
+        onForbidden?.(message);
+      }
     }
 
     return Promise.reject(error);

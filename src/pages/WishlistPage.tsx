@@ -1,5 +1,5 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Heart, Trash2, ArrowLeft, Star, Film, Ticket } from "lucide-react";
 import type { WishlistMovie } from "../utils/useWishlist";
@@ -23,31 +23,41 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({
   onRemove,
   onBookMovie
 }) => {
+  const navigate = useNavigate();
+
   return (
     <div style={{ minHeight: "85vh", padding: "3rem 4rem", color: "#F5F7FA" }}>
       {/* Back Navigation */}
       <div style={{ marginBottom: "2rem" }}>
-        <Link
-          to="/"
+        <button
+          type="button"
+          onClick={() => {
+            if (window.history.length > 1) {
+              navigate(-1);
+            } else {
+              navigate("/");
+            }
+          }}
           style={{
             display: "inline-flex",
             alignItems: "center",
             gap: "0.5rem",
             color: "#B8C0CC",
-            textDecoration: "none",
-            fontWeight: 600,
-            fontSize: "0.95rem",
             background: "rgba(255,255,255,0.05)",
             padding: "0.6rem 1.2rem",
             borderRadius: "50px",
             border: "1px solid rgba(255,255,255,0.1)",
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: "0.95rem",
             transition: "all 0.2s ease"
           }}
           onMouseEnter={(e) => (e.currentTarget.style.color = "#fff")}
           onMouseLeave={(e) => (e.currentTarget.style.color = "#B8C0CC")}
+          aria-label="Go back to previous screen"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to Movies & Shows
-        </Link>
+          <ArrowLeft className="w-4 h-4" /> Back
+        </button>
       </div>
 
       {/* Hero Header */}

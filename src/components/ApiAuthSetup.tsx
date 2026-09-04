@@ -1,7 +1,7 @@
-import { useAuth, useClerk } from "@clerk/react";
+import { useAuth } from "@clerk/react";
 import { useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
-import { configureApiAuth } from "../api/apiClient";
+import { clearApiAuth, configureApiAuth } from "../api/apiClient";
 
 interface ApiAuthSetupProps {
   children: ReactNode;
@@ -9,7 +9,6 @@ interface ApiAuthSetupProps {
 
 export function ApiAuthSetup({ children }: ApiAuthSetupProps) {
   const { getToken, isLoaded } = useAuth();
-  const { openSignIn } = useClerk();
 
   useEffect(() => {
     if (!isLoaded) {
@@ -19,16 +18,17 @@ export function ApiAuthSetup({ children }: ApiAuthSetupProps) {
     configureApiAuth({
       getToken: () => getToken(),
       onUnauthorized: () => {
-        toast.error("Session expired", {
-          description: "Please sign in again to continue.",
-        });
-        openSignIn();
+        // A token can be briefly unavailable while Clerk restores a refresh session. Protected
+        // actions handle 401 responses explicitly instead of forcing a sign-in modal globally.
+        toast.error("Session expired", { description: "Please sign in again to continue." });
       },
       onForbidden: (message) => {
         toast.error("Access denied", { description: message });
       },
     });
-  }, [getToken, isLoaded, openSignIn]);
+
+    return clearApiAuth;
+  }, [getToken, isLoaded]);
 
   return <>{children}</>;
 }

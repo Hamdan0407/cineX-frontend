@@ -1,5 +1,5 @@
-import { Show, SignInButton, UserButton, useUser, useClerk } from "@clerk/react";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useClerk } from "@clerk/react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { api, downloadAuthenticatedFile, fetchAuthenticatedBlobUrl, getApiErrorMessage } from "./api/apiClient";
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
@@ -7,53 +7,71 @@ import { Routes, Route, Link, useNavigate, useLocation, Navigate } from "react-r
 import { FeaturePage } from "./pages/FeaturePage";
 import { WishlistPage } from "./pages/WishlistPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { WalletPage } from "./pages/WalletPage";
+import { CouponRedeemModal } from "./components/CouponRedeemModal";
 import { useWishlist } from "./utils/useWishlist";
-import { Toaster, toast } from "sonner";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, MapPin, Ticket, Sparkles, Film, Calendar, Star, Heart, Compass, Settings, Headphones, Code, Play, ArrowLeft, Lock, Shield, Download, Home, User, Tv, Trophy, Gift } from "lucide-react";
+import { CinexToaster } from "./components/CinexToaster";
+import { toast } from "sonner";
+import { AnimatePresence } from "framer-motion";
+import { Search, MapPin, Ticket, Sparkles, Film, Calendar, Star, Compass, Settings, Headphones, Code, Play, ArrowLeft, Lock, Shield, Download, Home, User, Tv, Trophy, Gift, X, Bookmark, ChevronRight } from "lucide-react";
 import "./index.css";
 import { AdminPortal } from "./admin/AdminPortal";
 import { hasAdminRole } from "./utils/clerkRole";
+import { MovieCard } from "./components/MovieCard";
+import { MediaCoverImage } from "./components/MediaCoverImage";
+import { VibeChart } from "./components/VibeChart";
+import { MovieCarousel } from "./components/MovieCarousel";
+import { SeatMap } from "./components/SeatMap";
+import { TrailerModal } from "./components/TrailerModal";
+import { CitySelectorModal } from "./components/city/CitySelectorModal";
+import { AuthControls, useClerkAuthReady } from "./components/AuthControls";
+import { CinexLogo } from "./components/CinexLogo";
+import { citySearchResultToDisplay, resolveCityAvailabilityStatus, type CityDisplay } from "./config/cityCatalog";
+import { isClerkPublishableKeyValid } from "./utils/clerkConfig";
+import {
+  fetchShowsForTmdbMovie,
+  fetchBookableMovies,
+  fetchTmdbMovieDetails,
+  fetchTmdbMovieCredits,
+  fetchTmdbSimilarMovies,
+  fetchCities,
+  fetchMovieTrailer,
+  type CineXShow,
+} from "./services/cinemaApi";
+import {
+  buildNowShowingDisplay,
+  buildHeroCarouselMovies,
+  formatShowDate,
+  formatShowTime,
+  formatReleaseDate,
+  formatRuntime,
+  formatCompactCount,
+  getGenreList,
+  getDirectors,
+  getCrewByJobs,
+  getLangLabel,
+  getReleaseYear,
+  getProductionCountries,
+  extractTmdbGenres,
+  enrichTmdbWithCatalog,
+  parseTmdbCredits,
+  parseTmdbPayload,
+  mapTmdbSimilarMovie,
+  resolveMediaUrl,
+  resolveMovieBackdropUrl,
+  resolveTrailerPlaybackUrl,
+  type BookableMovieDto,
+  type TmdbCastMember,
+  type TrailerMediaDto,
+} from "./utils/movieUtils";
+import { isStaleHeldPoll, shouldDropLocalSelection } from "./utils/seatHoldSync";
+import { useDebounce } from "./utils/useDebounce";
+import { searchMoviesBackend } from "./services/cinemaApi";
 
-const IMG_BASE_URL     = "https://image.tmdb.org/t/p/w500";
-const IMG_ORIGINAL_URL = "https://image.tmdb.org/t/p/original";
-// Use the Nginx same-origin proxy in production; local .env.local may override this.
 const API_BASE         = import.meta.env.VITE_API_BASE_URL || "";
-
-// ── Language Helper ────────────────────────────────────────────────────────────
-const LANG_LABEL: Record<string, string> = {
-  hi: "Hindi",
-  en: "English",
-  ta: "Tamil",
-  te: "Telugu",
-  ml: "Malayalam",
-  kn: "Kannada",
-  bn: "Bengali",
-};
-const getLangLabel = (code: string) => LANG_LABEL[code] ?? code.toUpperCase();
-
-// ── Genre Mapping ──────────────────────────────────────────────────────────────
-const GENRE_MAP: Record<number, string> = {
-  28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy",
-  80: "Crime", 99: "Documentary", 18: "Drama", 10751: "Family",
-  14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music",
-  9648: "Mystery", 10749: "Romance", 878: "Sci-Fi", 10770: "TV Movie",
-  53: "Thriller", 10752: "War", 37: "Western",
-};
-const getGenres = (ids?: number[]) => {
-  if (!ids || ids.length === 0) return "Cinema • Feature";
-  return ids.slice(0, 3).map(id => GENRE_MAP[id] || "Drama").join(" • ");
-};
-
-type CineXShow = {
-  id: number;
-  movieId: number;
-  screenId: number;
-  showTime: string;
-  showDate: string;
-  price: number;
-  availableSeats: number;
-};
+const CLERK_KEY_OK     = isClerkPublishableKeyValid(import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+const SEAT_SESSION_KEY = "cinex_seat_session";
+const CINEX300_PROMPT_VISIT_KEY = "cinex300_prompt_seen_this_visit";
 
 type CineXSeat = {
   seatId: number;
@@ -61,68 +79,22 @@ type CineXSeat = {
   seatType: string;
   status: "AVAILABLE" | "BOOKED";
   price: number;
+  rowLabel?: string;
+  rowIndex?: number;
+  columnIndex?: number;
+  wheelchairAccessible?: boolean;
 };
-
-type CineXScreen = { id: number; screenName: string; theatreId: number };
-type CineXTheatre = { id: number; name: string; city: string };
-const getGenreList = (ids?: number[]) => {
-  if (!ids || ids.length === 0) return ["Drama", "Cinema"];
-  return ids.slice(0, 4).map(id => GENRE_MAP[id] || "Drama");
-};
-
-// ── Cities ─────────────────────────────────────────────────────────────────────
-const CITIES = [
-  { name: "Chennai",   state: "Tamil Nadu",     emoji: "🏖️" },
-  { name: "Bengaluru", state: "Karnataka",      emoji: "💻" },
-  { name: "Hyderabad", state: "Telangana",      emoji: "💎" },
-  { name: "Mumbai",    state: "Maharashtra",    emoji: "🌊" },
-  { name: "Delhi NCR", state: "Delhi",          emoji: "🏛️" },
-];
-
-// ── Realistic Theatre Database per City ────────────────────────────────────────
-const THEATRES_DB: Record<string, Array<{
-  name: string;
-  features: string;
-  distance: string;
-  times: Array<{ t: string; s: string; type: string }>;
-}>> = {
-  Chennai: [
-    { name: "Sathyam Cinemas: Royapettah", features: "4K Dolby Atmos • SPI Gourmet", distance: "2.1 km", times: [{ t: "09:30 AM", s: "available", type: "4K Atmos" }, { t: "01:15 PM", s: "fast-filling", type: "Dolby 7.1" }, { t: "04:45 PM", s: "available", type: "4K Atmos" }, { t: "09:15 PM", s: "almost-full", type: "IMAX" }] },
-    { name: "PVR: Phoenix Marketcity, Velachery", features: "IMAX with Laser • 4K Dolby Atmos", distance: "6.4 km", times: [{ t: "10:00 AM", s: "available", type: "IMAX 3D" }, { t: "02:30 PM", s: "available", type: "Atmos" }, { t: "06:15 PM", s: "fast-filling", type: "IMAX Laser" }, { t: "10:30 PM", s: "available", type: "Dolby 7.1" }] },
-    { name: "AGS Cinemas: T. Nagar", features: "Dolby Atmos • Recliner Lounge", distance: "3.8 km", times: [{ t: "11:15 AM", s: "available", type: "Atmos" }, { t: "03:00 PM", s: "fast-filling", type: "Dolby 7.1" }, { t: "07:00 PM", s: "available", type: "Atmos" }] },
-    { name: "ROHINI Silver Screens: Koyambedu", features: "RGB Laser • Dolby Atmos • Fans Fort", distance: "8.2 km", times: [{ t: "08:30 AM", s: "fast-filling", type: "Laser" }, { t: "12:30 PM", s: "available", type: "Atmos" }, { t: "05:00 PM", s: "almost-full", type: "RGB Laser" }, { t: "08:45 PM", s: "available", type: "Atmos" }] },
-  ],
-  Bengaluru: [
-    { name: "PVR: Forum Mall, Koramangala", features: "IMAX • 4K Dolby Atmos • Gold Class", distance: "3.2 km", times: [{ t: "10:00 AM", s: "available", type: "IMAX" }, { t: "01:30 PM", s: "fast-filling", type: "Atmos" }, { t: "05:15 PM", s: "available", type: "Gold" }, { t: "09:00 PM", s: "almost-full", type: "IMAX" }] },
-    { name: "INOX: Mantri Square, Malleshwaram", features: "INSIGNIA • Dolby 7.1 • 2K Laser", distance: "5.1 km", times: [{ t: "09:45 AM", s: "available", type: "Laser" }, { t: "01:15 PM", s: "available", type: "INSIGNIA" }, { t: "06:30 PM", s: "fast-filling", type: "Dolby 7.1" }, { t: "10:15 PM", s: "available", type: "Laser" }] },
-    { name: "Cinepolis: Orion Mall, Rajajinagar", features: "4DX • VIP Recliners • Dolby Atmos", distance: "7.8 km", times: [{ t: "11:00 AM", s: "available", type: "4DX" }, { t: "03:30 PM", s: "fast-filling", type: "Atmos" }, { t: "07:45 PM", s: "available", type: "VIP" }] },
-    { name: "Urvashi Theatre: Lalbagh Road", features: "4K RGB Laser • Dolby Atmos • Giant Screen", distance: "2.4 km", times: [{ t: "10:30 AM", s: "fast-filling", type: "4K Laser" }, { t: "02:15 PM", s: "available", type: "Atmos" }, { t: "06:00 PM", s: "almost-full", type: "Giant Screen" }, { t: "09:30 PM", s: "available", type: "Atmos" }] },
-  ],
-  Hyderabad: [
-    { name: "AMB Cinemas: Gachibowli", features: "Laser projection • VIP Lounge • Dolby Atmos", distance: "4.5 km", times: [{ t: "09:45 AM", s: "available", type: "Laser VIP" }, { t: "01:30 PM", s: "fast-filling", type: "Atmos" }, { t: "05:00 PM", s: "almost-full", type: "Laser VIP" }, { t: "08:45 PM", s: "available", type: "Atmos" }] },
-    { name: "Prasads Multiplex: Necklace Road", features: "Large Screen • RGB Laser • Dolby Atmos", distance: "3.1 km", times: [{ t: "08:45 AM", s: "fast-filling", type: "Large Screen" }, { t: "12:15 PM", s: "available", type: "Atmos" }, { t: "04:00 PM", s: "almost-full", type: "RGB Laser" }, { t: "08:00 PM", s: "available", type: "Large Screen" }] },
-    { name: "PVR: Nexus Mall, Kukatpally", features: "IMAX • Dolby Atmos • Recliners", distance: "9.2 km", times: [{ t: "10:15 AM", s: "available", type: "IMAX" }, { t: "02:00 PM", s: "available", type: "Atmos" }, { t: "06:15 PM", s: "fast-filling", type: "IMAX" }, { t: "10:00 PM", s: "available", type: "Recliner" }] },
-    { name: "Cinepolis: Sarath City Capital Mall", features: "4DX • VIP Recliners • Dolby Atmos", distance: "6.8 km", times: [{ t: "11:00 AM", s: "available", type: "4DX" }, { t: "03:15 PM", s: "fast-filling", type: "Atmos" }, { t: "07:30 PM", s: "available", type: "VIP" }] },
-  ],
-  Mumbai: [
-    { name: "PVR: ICON Palladium, Lower Parel", features: "IMAX • 4K Dolby Atmos • Recliner Seats", distance: "1.2 km", times: [{ t: "09:30 AM", s: "available", type: "IMAX" }, { t: "12:45 PM", s: "fast-filling", type: "Atmos" }, { t: "04:15 PM", s: "available", type: "IMAX Laser" }, { t: "08:30 PM", s: "almost-full", type: "Recliner" }] },
-    { name: "INOX: Laserplex, Nariman Point", features: "Laser Projection • Dolby 7.1 • Gourmet Food", distance: "3.5 km", times: [{ t: "10:15 AM", s: "available", type: "Laser" }, { t: "01:30 PM", s: "available", type: "Dolby 7.1" }, { t: "05:00 PM", s: "fast-filling", type: "Laser" }, { t: "09:15 PM", s: "available", type: "Dolby 7.1" }] },
-    { name: "Cinepolis: Fun Republic, Andheri", features: "4DX • Dolby Atmos • RealD 3D", distance: "8.1 km", times: [{ t: "11:00 AM", s: "available", type: "4DX 3D" }, { t: "03:15 PM", s: "fast-filling", type: "Atmos" }, { t: "07:00 PM", s: "available", type: "RealD 3D" }] },
-    { name: "Carnival: IMAX Wadala", features: "IMAX Dome • Giant Screen • Dolby Digital", distance: "5.4 km", times: [{ t: "10:00 AM", s: "available", type: "IMAX Dome" }, { t: "02:00 PM", s: "almost-full", type: "Giant" }, { t: "06:30 PM", s: "available", type: "IMAX Dome" }, { t: "10:00 PM", s: "fast-filling", type: "Giant" }] },
-  ],
-  "Delhi NCR": [
-    { name: "PVR: Select CityWalk, Saket", features: "IMAX • Gold Class • Dolby Atmos", distance: "4.1 km", times: [{ t: "10:00 AM", s: "available", type: "IMAX" }, { t: "01:15 PM", s: "fast-filling", type: "Gold Class" }, { t: "05:30 PM", s: "available", type: "Atmos" }, { t: "09:15 PM", s: "almost-full", type: "IMAX" }] },
-    { name: "INOX: Odeon, Connaught Place", features: "Heritage • 4K Projection • Dolby 7.1", distance: "1.8 km", times: [{ t: "09:30 AM", s: "available", type: "4K" }, { t: "12:45 PM", s: "available", type: "Dolby 7.1" }, { t: "04:30 PM", s: "fast-filling", type: "4K" }, { t: "08:30 PM", s: "available", type: "Dolby 7.1" }] },
-    { name: "PVR: Ambience Mall, Gurugram", features: "IMAX with Laser • 4DX • Recliners", distance: "12.5 km", times: [{ t: "10:30 AM", s: "available", type: "IMAX Laser" }, { t: "02:15 PM", s: "fast-filling", type: "4DX" }, { t: "06:45 PM", s: "available", type: "Recliner" }, { t: "10:30 PM", s: "available", type: "IMAX Laser" }] },
-    { name: "Cinepolis: DLF Mall of India, Noida", features: "4DX • Megaplex • Dolby Atmos", distance: "9.3 km", times: [{ t: "11:00 AM", s: "available", type: "4DX" }, { t: "03:00 PM", s: "almost-full", type: "Megaplex" }, { t: "07:15 PM", s: "available", type: "Atmos" }] },
-  ],
-};
-
-// Retained only for any non-customer demo surfaces; customer booking uses API data below.
-void THEATRES_DB;
 
 export default function App() {
-  const { isSignedIn, isLoaded, user } = useUser();
+  const {
+    isLoaded,
+    isSignedIn,
+    userId,
+    user,
+    getToken,
+    clerkStillInitializing,
+    clerkLikelyMisconfigured,
+  } = useClerkAuthReady();
   const { openSignIn } = useClerk();
 
   // Movie state
@@ -134,25 +106,103 @@ export default function App() {
 
   // Filter state
   const [searchQuery,  setSearchQuery]  = useState("");
-  const [activeLang]                  = useState("all");
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const mobileSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    setMobileSearchOpen(false);
+    searchInputRef.current?.blur();
+    mobileSearchInputRef.current?.blur();
+  }, []);
+
+  const openMobileSearch = useCallback(() => {
+    setMobileSearchOpen(true);
+    window.setTimeout(() => mobileSearchInputRef.current?.focus(), 0);
+  }, []);
+  
+  const [homeScreeningLang, setHomeScreeningLang] = useState("all");
+  const [detailScreeningLang, setDetailScreeningLang] = useState("all");
+
+  useEffect(() => {
+    if (debouncedSearchQuery.trim().length < 2) {
+      setSearchResults([]);
+      setIsSearching(false);
+      setSearchError("");
+      return;
+    }
+    
+    let cancelled = false;
+    setIsSearching(true);
+    setSearchError("");
+    searchMoviesBackend(debouncedSearchQuery)
+      .then(res => {
+        if (cancelled) return;
+        const mapped = res.map(m => ({
+          ...m,
+          id: Number(m.tmdbId),
+          tmdbId: Number(m.tmdbId),
+          backendMovieId: m.id,
+          title: m.title,
+          poster_path: m.posterPath,
+          backdrop_path: null,
+          genre_label: m.genre || "Cinema",
+          overview: m.description || "",
+          runtime: m.duration || null,
+          bookable: true,
+        }));
+        setSearchResults(mapped);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSearchError("Unable to search movies right now.");
+          setSearchResults([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsSearching(false);
+      });
+      
+    return () => { cancelled = true; };
+  }, [debouncedSearchQuery]);
 
   // City state
-  const [currentCity,     setCurrentCity]     = useState("Chennai");
-  const [cityModalOpen,   setCityModalOpen]   = useState(false);
-  const [citySearch,      setCitySearch]      = useState("");
+  const [availableCities, setAvailableCities] = useState<CityDisplay[]>([]);
+  const [currentCity,     setCurrentCity]     = useState(() => localStorage.getItem("cinex_city") || "");
+  const [cityBootstrapLoading, setCityBootstrapLoading] = useState(true);
+  const [cityBookableTmdbIds, setCityBookableTmdbIds] = useState<Set<number>>(new Set());
+  const [cityBookableMeta, setCityBookableMeta] = useState<Record<number, BookableMovieDto>>({});
+  const [cityCatalogLoading, setCityCatalogLoading] = useState(false);
+  const [cityCatalogError,   setCityCatalogError]   = useState("");
+  const [cityListError,      setCityListError]      = useState("");
+  const [cityLanguages,   setCityLanguages]   = useState<string[]>([]);
+  const [detailLanguages, setDetailLanguages] = useState<string[]>([]);
+  const [cityModalOpen,   setCityModalOpen]   = useState(() => !localStorage.getItem("cinex_city"));
   const [isAdminOpen,     setIsAdminOpen]     = useState(false);
+  const [couponOpen, setCouponOpen] = useState(false);
 
   // UI overlays & Modals
   const [currentMovie,   setCurrentMovie]   = useState<any>(null);
   const [shows,          setShows]          = useState<CineXShow[]>([]);
   const [showsLoading,   setShowsLoading]   = useState(false);
   const [showsError,     setShowsError]     = useState("");
+  const [detailLoading,  setDetailLoading]  = useState(false);
+  const [detailExtrasError, setDetailExtrasError] = useState("");
+  const [movieCast,      setMovieCast]      = useState<TmdbCastMember[]>([]);
+  const [movieCrew,      setMovieCrew]      = useState<ReturnType<typeof parseTmdbCredits>["crew"]>([]);
+  const [similarMovies,  setSimilarMovies]  = useState<any[]>([]);
   const [selectedShow,   setSelectedShow]   = useState<CineXShow | null>(null);
   const [showSeats,      setShowSeats]      = useState<CineXSeat[]>([]);
   const [seatsLoading,   setSeatsLoading]   = useState(false);
-  const [screens,        setScreens]        = useState<CineXScreen[]>([]);
-  const [theatres,       setTheatres]       = useState<CineXTheatre[]>([]);
   const [isDetailOpen,   setIsDetailOpen]   = useState(false);
+  const [trailerModalOpen, setTrailerModalOpen] = useState(false);
+  const [trailerModalTitle, setTrailerModalTitle] = useState("");
+  const [trailerModalUrl, setTrailerModalUrl] = useState<string | null>(null);
   const [isSeatOpen,     setIsSeatOpen]     = useState(false);
   const [currentTheatre, setCurrentTheatre] = useState("");
   const [currentTime,    setCurrentTime]    = useState("");
@@ -163,22 +213,30 @@ export default function App() {
   const lockSessionIdRef = useRef<string>(crypto.randomUUID());
   const selectedSeatsRef = useRef(selectedSeats);
   selectedSeatsRef.current = selectedSeats;
+  const heldPollGenRef = useRef(0);
+  const recentlyLockedAtRef = useRef<Map<number, number>>(new Map());
+  const lockInFlightRef = useRef<Set<number>>(new Set());
 
   // Checkout & Payment
   const [isPaymentOpen,  setIsPaymentOpen]  = useState(false);
   const [processing,     setProcessing]     = useState(false);
   const [paymentError,   setPaymentError]   = useState("");
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"RAZORPAY" | "WALLET">("RAZORPAY");
+  const [walletBalance, setWalletBalance] = useState<number | null>(null);
   const [lastBooking, setLastBooking] = useState<{
     bookingId: string | number;
     movieTitle: string;
     posterPath: string;
     theatreName: string;
+    screenName?: string;
+    screeningLanguage?: string;
     showDate: string;
     showTime: string;
     seats: string[];
     totalAmount: number;
     ticketToken?: string;
+    ticketQrUrl?: string;
   } | null>(null);
   const [selectedDetailDate, setSelectedDetailDate] = useState<string>("");
 
@@ -190,10 +248,73 @@ export default function App() {
   // Carousel
   const [currentSlide,   setCurrentSlide]   = useState(0);
   const detailRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
 
   const navigate = useNavigate();
   const location = useLocation();
   const { wishlist, isWishlisted, toggleWishlist, removeWishlist, wishlistCount } = useWishlist(user?.id);
+
+  const backendCatalogRef = useRef<any[]>([]);
+  const currentMovieRef = useRef<any>(null);
+  currentMovieRef.current = currentMovie;
+
+  const fetchCityCinemaData = useCallback((city: string, language?: string) => {
+    setCityCatalogLoading(true);
+    setCityCatalogError("");
+    const lang = language && language !== "all" ? language : undefined;
+    const langQuery = lang ? `&language=${encodeURIComponent(lang)}` : "";
+    return Promise.all([
+      api.get(`/api/shows/availability?city=${encodeURIComponent(city)}${langQuery}`, { skipAuth: true }),
+      fetchBookableMovies(city, lang),
+    ])
+      .then(([availabilityRes, bookableMovies]) => {
+        const tmdbIds: number[] = availabilityRes.data?.tmdbIds || [];
+        setCityBookableTmdbIds(new Set(tmdbIds.map((id) => Number(id))));
+        setCityLanguages(availabilityRes.data?.languages || []);
+
+        const meta: Record<number, BookableMovieDto> = {};
+        (bookableMovies || []).forEach((movie) => {
+          if (movie?.tmdbId != null) {
+            meta[Number(movie.tmdbId)] = movie;
+          }
+        });
+        setCityBookableMeta(meta);
+      })
+      .catch(() => {
+        setCityCatalogError(`Unable to load shows for ${city}. Please try again.`);
+        setCityBookableTmdbIds(new Set());
+        setCityBookableMeta({});
+        setCityLanguages([]);
+      })
+      .finally(() => setCityCatalogLoading(false));
+  }, []);
+
+  const loadShowsForMovie = useCallback((movie: any, city: string) => {
+    const tmdbId = Number(movie?.tmdbId ?? movie?.id);
+    if (!tmdbId || !city) return Promise.resolve();
+    setShowsLoading(true);
+    setShowsError("");
+    setSelectedShow(null);
+    setCurrentShowId(null);
+    return fetchShowsForTmdbMovie(tmdbId, city)
+      .then((data) => {
+        setShows(data);
+        setDetailLanguages([...new Set(data.map((show) => show.screeningLanguage).filter(Boolean) as string[])]);
+        if (data.length === 0) {
+          setShowsError(`No CineX showtimes available in ${city}.`);
+          setSelectedDetailDate("");
+          return;
+        }
+        const dates = [...new Set(data.map((show) => show.showDate))].sort();
+        setSelectedDetailDate((prev) => (prev && dates.includes(prev) ? prev : dates[0]));
+      })
+      .catch((err) => {
+        console.error("Failed to load showtimes:", err);
+        setShowsError("Unable to load showtimes. Please try again.");
+        setShows([]);
+      })
+      .finally(() => setShowsLoading(false));
+  }, []);
 
   // ── Fetch Bookings from Spring Boot Backend ────────────────────────────────────
   const fetchUserBookings = useCallback(() => {
@@ -207,54 +328,226 @@ export default function App() {
       });
   }, [isLoaded, isSignedIn, user?.id]);
 
+  useEffect(() => {
+    if (isSignedIn && user?.id) {
+      fetchUserBookings();
+    }
+  }, [isSignedIn, user?.id, fetchUserBookings]);
+
   // ── Fetch Movies from Spring Boot Backend ──────────────────────────────────────
-  const mapBackendMovieToTmdb = (movie: any) => ({
-    id: movie.id,
-    title: movie.title,
-    overview: movie.description || "",
-    poster_path: movie.posterPath || null,
-    backdrop_path: movie.posterPath || null,
-    original_language: (movie.language || "en").slice(0, 2).toLowerCase(),
-    genre_ids: [] as number[],
-    vote_average: 8,
-  });
-
-  const loadMoviesFromBackendCatalog = () =>
-    api.get("/api/movies", { skipAuth: true }).then((res) => {
-      const catalog = (res.data || []).map(mapBackendMovieToTmdb);
-      setMoviesNowPlaying(catalog);
-      setMoviesTrending(catalog);
-      setMoviesUpcoming(catalog);
-      setLoading(false);
-    });
-
   const fetchAllMovies = useCallback(() => {
     setLoading(true);
     setApiError(false);
-    Promise.all([
+
+    Promise.allSettled([
+      api.get("/api/movies", { skipAuth: true }),
       api.get("/api/tmdb/now_playing", { skipAuth: true }),
       api.get("/api/tmdb/trending", { skipAuth: true }),
       api.get("/api/tmdb/upcoming", { skipAuth: true }),
     ])
-      .then(([resNow, resTrend, resUp]) => {
-        setMoviesNowPlaying(resNow.data.results || []);
-        setMoviesTrending(resTrend.data.results || []);
-        setMoviesUpcoming(resUp.data.results || []);
+      .then(([catalogResult, nowPlayingResult, trendingResult, upcomingResult]) => {
+        const catalog = catalogResult.status === "fulfilled" ? (catalogResult.value.data || []) : [];
+        backendCatalogRef.current = catalog;
+
+        const nowPlaying = nowPlayingResult.status === "fulfilled"
+          ? enrichTmdbWithCatalog(parseTmdbPayload(nowPlayingResult.value.data), catalog)
+          : [];
+        const trending = trendingResult.status === "fulfilled"
+          ? enrichTmdbWithCatalog(parseTmdbPayload(trendingResult.value.data), catalog)
+          : [];
+        const upcoming = upcomingResult.status === "fulfilled"
+          ? enrichTmdbWithCatalog(parseTmdbPayload(upcomingResult.value.data), catalog)
+          : [];
+
+        if (nowPlaying.length > 0) {
+          setMoviesNowPlaying(nowPlaying);
+        } else {
+          setMoviesNowPlaying([]);
+        }
+
+        if (trending.length > 0) {
+          setMoviesTrending(trending);
+        } else {
+          setMoviesTrending([]);
+        }
+
+        if (upcoming.length > 0) {
+          setMoviesUpcoming(upcoming);
+        } else {
+          setMoviesUpcoming([]);
+        }
+
+        const hasTmdbData = nowPlaying.length > 0 || trending.length > 0 || upcoming.length > 0;
+        if (!hasTmdbData) {
+          setApiError(true);
+        }
+
         setLoading(false);
       })
-      .catch(err => {
-        console.warn("TMDB unavailable, falling back to backend movie catalog:", err);
-        loadMoviesFromBackendCatalog().catch(fallbackErr => {
-          console.error("Failed to load movies from backend:", fallbackErr);
-          setApiError(true);
-          setLoading(false);
-        });
+      .catch((err) => {
+        console.error("Failed to load movies:", err);
+        setApiError(true);
+        setMoviesNowPlaying([]);
+        setMoviesTrending([]);
+        setMoviesUpcoming([]);
+        setLoading(false);
+      });
+  }, []);
+
+  // Extracted from the mount effect so the city picker can retry. The request-id guard keeps the
+  // original cancellation semantics: only the newest call is allowed to write state.
+  const cityLoadRef = useRef(0);
+  const loadCities = useCallback(() => {
+    const requestId = ++cityLoadRef.current;
+    const isStale = () => requestId !== cityLoadRef.current;
+
+    setCityBootstrapLoading(true);
+    setCityListError("");
+
+    fetchCities()
+      .then((cities) => {
+        if (isStale()) return;
+        const displays = cities.map(citySearchResultToDisplay);
+        setAvailableCities(displays);
+        const persisted = localStorage.getItem("cinex_city")?.trim() || "";
+        const restored = displays.find((city) => city.city.toLowerCase() === persisted.toLowerCase());
+        if (restored && restored.cinexAvailable) {
+          setCurrentCity(restored.city);
+          localStorage.setItem("cinex_city", restored.city);
+          setCityModalOpen(false);
+        } else {
+          setCurrentCity("");
+          localStorage.removeItem("cinex_city");
+          setCityModalOpen(true);
+        }
+      })
+      .catch(() => {
+        if (isStale()) return;
+        // A failed catalog fetch is not evidence that the saved city is invalid — showtimes,
+        // availability and city search all work without /api/cities. So keep the user's city and
+        // only force the picker open when there is none, this time with a message and a retry
+        // instead of the previous blank, non-dismissible modal.
+        setCityListError("Unable to load the city list right now.");
+        if (!localStorage.getItem("cinex_city")?.trim()) {
+          setCurrentCity("");
+          setCityModalOpen(true);
+        }
+      })
+      .finally(() => {
+        if (!isStale()) setCityBootstrapLoading(false);
       });
   }, []);
 
   useEffect(() => {
+    loadCities();
+    // Invalidate any in-flight catalog request on unmount.
+    return () => { cityLoadRef.current++; };
+  }, [loadCities]);
+
+  useEffect(() => {
+    if (!cityBootstrapLoading && currentCity) {
+      fetchCityCinemaData(currentCity, homeScreeningLang);
+    }
+  }, [cityBootstrapLoading, currentCity, homeScreeningLang, fetchCityCinemaData]);
+
+  useEffect(() => {
     fetchAllMovies();
   }, [fetchAllMovies]);
+
+  useEffect(() => {
+    if (isLoaded && !sessionStorage.getItem(CINEX300_PROMPT_VISIT_KEY)) {
+      setCouponOpen(true);
+    }
+  }, [isLoaded]);
+
+  const dismissCoupon = () => {
+    sessionStorage.setItem(CINEX300_PROMPT_VISIT_KEY, "true");
+    setCouponOpen(false);
+  };
+
+  const completeCouponRedemption = (balance: number) => {
+    sessionStorage.setItem(CINEX300_PROMPT_VISIT_KEY, "true");
+    setCouponOpen(false);
+    toast.success("₹300 added to your CineX Wallet.", { description: `New balance: ₹${balance.toFixed(2)}` });
+    navigate("/wallet");
+  };
+
+  // Prevent double scrollbar by locking background scroll when any modal/overlay is open
+  const isAnyModalActive = Boolean(couponOpen || cityModalOpen || isPaymentOpen || isHistoryOpen || isDetailOpen || isSeatOpen);
+  useEffect(() => {
+    if (isAnyModalActive) {
+      document.body.classList.add("modal-open");
+      document.documentElement.classList.add("modal-open");
+    } else {
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+    }
+    return () => {
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+    };
+  }, [isAnyModalActive]);
+
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+
+    const syncHeaderHeight = () => {
+      document.documentElement.style.setProperty("--cx-header-height", `${header.offsetHeight}px`);
+    };
+
+    syncHeaderHeight();
+    const observer = new ResizeObserver(syncHeaderHeight);
+    observer.observe(header);
+    window.addEventListener("resize", syncHeaderHeight);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", syncHeaderHeight);
+    };
+  }, []);
+
+  // Abandoned-checkout recovery links: /?recover=1&showId=...&movieId=...
+  const recoveryHandledRef = useRef(false);
+  useEffect(() => {
+    if (recoveryHandledRef.current || loading) return;
+    const params = new URLSearchParams(location.search);
+    if (params.get("recover") !== "1") return;
+
+    const showId = Number(params.get("showId"));
+    const movieId = Number(params.get("movieId"));
+    if (!showId) return;
+
+    recoveryHandledRef.current = true;
+    try {
+      sessionStorage.setItem(SEAT_SESSION_KEY, JSON.stringify({
+        showId,
+        theatreName: params.get("theatre") || undefined,
+        showTime: params.get("showTime") || undefined,
+        movieTitle: params.get("movieTitle") || undefined,
+      }));
+    } catch { /* ignore */ }
+
+    navigate("/", { replace: true });
+
+    if (movieId) {
+      const catalogMovie = [...moviesNowPlaying, ...moviesTrending, ...moviesUpcoming]
+        .find((movie) => Number(movie.id) === movieId || Number(movie.tmdbId) === movieId);
+      if (catalogMovie) {
+        handleMovieClick(catalogMovie);
+      }
+    }
+
+    setCurrentShowId(showId);
+    if (params.get("theatre")) setCurrentTheatre(params.get("theatre")!);
+    if (params.get("showTime")) setCurrentTime(params.get("showTime")!);
+    setIsSeatOpen(true);
+    setSeatsLoading(true);
+    api.get(`/api/shows/${showId}/seats`, { skipAuth: true })
+      .then(res => setShowSeats(res.data || []))
+      .catch(() => toast.error("Unable to restore your saved show."))
+      .finally(() => setSeatsLoading(false));
+  }, [loading, location.search, moviesNowPlaying, moviesTrending, moviesUpcoming, navigate]);
 
   useEffect(() => {
     if (isLoaded && user?.id) {
@@ -264,22 +557,31 @@ export default function App() {
     }
   }, [isLoaded, user?.id, fetchUserBookings]);
 
-  // Filter helper
-  const filterMovies = (list: any[]) => {
-    return list.filter(m => {
-      if (activeLang !== "all" && m.original_language !== activeLang) return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const titleMatch = m.title?.toLowerCase().includes(q);
-        const genreMatch = getGenres(m.genre_ids).toLowerCase().includes(q);
-        return titleMatch || genreMatch;
-      }
-      return true;
-    });
-  };
+  const nowShowingMovies = useMemo(() => {
+    return buildNowShowingDisplay(
+      moviesNowPlaying,
+      cityBookableTmdbIds,
+      cityBookableMeta,
+      homeScreeningLang
+    );
+  }, [moviesNowPlaying, cityBookableTmdbIds, cityBookableMeta, homeScreeningLang]);
 
-  // Auto-advance hero carousel (filtered by language)
-  const carouselMovies = filterMovies(moviesTrending.length > 0 ? moviesTrending : moviesNowPlaying).slice(0, 5);
+  const bookableCountInCity = cityBookableTmdbIds.size;
+
+  // "The backend says this city has no CineX theatres" is a different situation from "no showtimes
+  // today", and must not be reported as an error. Derived from the catalog's cinexAvailable flag.
+  const cityHasNoTheatres = useMemo(
+    () => resolveCityAvailabilityStatus(availableCities, currentCity) === "no-theatres",
+    [availableCities, currentCity]
+  );
+
+  const trendingDisplay = moviesTrending;
+  const upcomingDisplay = moviesUpcoming;
+
+  const carouselMovies = useMemo(
+    () => buildHeroCarouselMovies([moviesNowPlaying, trendingDisplay, moviesUpcoming]),
+    [moviesNowPlaying, trendingDisplay, moviesUpcoming],
+  );
   useEffect(() => {
     if (carouselMovies.length <= 1) return;
     const timer = setInterval(() => {
@@ -290,38 +592,99 @@ export default function App() {
 
   const handleMovieClick = (movie: any) => {
     if (!movie) return;
-    setCurrentMovie(movie);
+    const tmdbId = Number(movie.tmdbId ?? movie.id);
+    const enrichedMovie = {
+      ...movie,
+      id: tmdbId,
+      tmdbId,
+      poster_path: movie.poster_path || null,
+      backdrop_path: movie.backdrop_path || null,
+      trailerPlaybackUrl: movie.trailerPlaybackUrl ?? cityBookableMeta[tmdbId]?.trailerPlaybackUrl ?? null,
+      trailerObjectKey: movie.trailerObjectKey ?? cityBookableMeta[tmdbId]?.trailerObjectKey ?? null,
+    };
+    setCurrentMovie(enrichedMovie);
     setSelectedShow(null);
     setShows([]);
     setShowsError("");
-    setShowsLoading(true);
     setSelectedDetailDate("");
-    setSelectedShow(null);
+    setDetailLanguages([]);
+    setDetailScreeningLang("all");
+    setDetailExtrasError("");
+    setMovieCast([]);
+    setMovieCrew([]);
+    setSimilarMovies([]);
     setIsDetailOpen(true);
+
+    setDetailLoading(true);
     Promise.all([
-      api.get("/api/movies", { skipAuth: true }),
-      api.get("/api/screens", { skipAuth: true }),
-      api.get("/api/theatres", { skipAuth: true }),
-    ]).then(([moviesRes, screensRes, theatresRes]) => {
-      const backendMovie = (moviesRes.data || []).find((item: any) =>
-        item.title?.trim().toLowerCase() === movie.title?.trim().toLowerCase()
-      );
-      setScreens(screensRes.data || []);
-      setTheatres(theatresRes.data || []);
-      if (!backendMovie?.id) {
-        setShowsError("No CineX shows are scheduled for this movie yet.");
+      fetchTmdbMovieDetails(tmdbId).catch(() => null),
+      fetchTmdbMovieCredits(tmdbId).catch(() => {
+        setDetailExtrasError("Cast and crew could not be loaded right now.");
         return null;
-      }
-      return api.get(`/api/shows/movie/${backendMovie.id}`, { skipAuth: true });
-    }).then((showsRes) => {
-      if (showsRes?.data) {
-        setShows(showsRes.data);
-        const dates = [...new Set((showsRes.data as CineXShow[]).map(s => s.showDate))].sort();
-        if (dates.length > 0) setSelectedDetailDate(dates[0]);
-      }
-    }).catch(() => {
-      setShowsError("Unable to load showtimes. Please try again.");
-    }).finally(() => setShowsLoading(false));
+      }),
+      fetchTmdbSimilarMovies(tmdbId).catch(() => []),
+      fetchMovieTrailer(tmdbId).catch((): TrailerMediaDto => ({ available: false, tmdbId })),
+    ])
+      .then(([tmdbDetails, creditsPayload, similarPayload, trailerPayload]) => {
+        if (tmdbDetails && typeof tmdbDetails === "object") {
+          setCurrentMovie((prev: any) => ({
+            ...prev,
+            ...tmdbDetails,
+            id: tmdbId,
+            tmdbId,
+            poster_path: (tmdbDetails as any).poster_path ?? prev?.poster_path ?? null,
+            backdrop_path: (tmdbDetails as any).backdrop_path ?? prev?.backdrop_path ?? null,
+            trailerPlaybackUrl: trailerPayload?.trailerPlaybackUrl ?? prev?.trailerPlaybackUrl ?? null,
+            trailerObjectKey: trailerPayload?.trailerObjectKey ?? prev?.trailerObjectKey ?? null,
+          }));
+        } else if (trailerPayload?.available) {
+          setCurrentMovie((prev: any) => ({
+            ...prev,
+            trailerPlaybackUrl: trailerPayload.trailerPlaybackUrl ?? null,
+            trailerObjectKey: trailerPayload.trailerObjectKey ?? null,
+          }));
+        }
+        const { cast, crew } = parseTmdbCredits(creditsPayload);
+        setMovieCast(cast);
+        setMovieCrew(crew);
+        setSimilarMovies(
+          (similarPayload || [])
+            .filter((item) => item && Number(item.id) !== tmdbId)
+            .map((item) => mapTmdbSimilarMovie(item))
+            .slice(0, 12)
+        );
+      })
+      .catch(() => {
+        setDetailExtrasError("Some movie details could not be loaded.");
+      })
+      .finally(() => setDetailLoading(false));
+
+    if (!currentCity) {
+      setShowsError("Choose your city to see showtimes.");
+      return;
+    }
+
+    setShowsLoading(true);
+    fetchShowsForTmdbMovie(tmdbId, currentCity)
+      .then((showData) => {
+        setShows(showData);
+        setDetailLanguages([...new Set(showData.map((show) => show.screeningLanguage).filter(Boolean) as string[])]);
+        if (showData.length === 0) {
+          setShowsError(`No CineX showtimes available in ${currentCity}.`);
+          setSelectedDetailDate("");
+          return;
+        }
+        const dates = [...new Set(showData.map((show) => show.showDate))].sort();
+        setSelectedDetailDate(dates[0]);
+        fetchCityCinemaData(currentCity, homeScreeningLang);
+      })
+      .catch((err) => {
+        console.error("Failed to load showtimes:", err);
+        setShowsError("Unable to load showtimes. Please try again.");
+        setShows([]);
+      })
+      .finally(() => setShowsLoading(false));
+
     if (location.pathname !== "/" && location.pathname !== "/movies") {
       navigate("/");
     }
@@ -331,28 +694,156 @@ export default function App() {
   const closeDetail = () => {
     setIsDetailOpen(false);
     setCurrentMovie(null);
+    setDetailLoading(false);
+    setDetailExtrasError("");
+    setMovieCast([]);
+    setMovieCrew([]);
+    setSimilarMovies([]);
+  };
+
+  const closeTrailerModal = useCallback(() => {
+    setTrailerModalOpen(false);
+    setTrailerModalUrl(null);
+    setTrailerModalTitle("");
+  }, []);
+
+  const openTrailer = useCallback(async (movie: any) => {
+    if (!movie) return;
+    const tmdbId = Number(movie.tmdbId ?? movie.id);
+    const title = typeof movie.title === "string" ? movie.title : "Movie";
+
+    let playbackUrl = resolveTrailerPlaybackUrl({
+      trailerPlaybackUrl: movie.trailerPlaybackUrl,
+      trailerObjectKey: movie.trailerObjectKey,
+    });
+
+    if (!playbackUrl) {
+      const bookableMeta = cityBookableMeta[tmdbId];
+      playbackUrl = resolveTrailerPlaybackUrl(bookableMeta);
+    }
+
+    if (!playbackUrl) {
+      try {
+        const trailer = await fetchMovieTrailer(tmdbId);
+        playbackUrl = resolveTrailerPlaybackUrl(trailer);
+      } catch {
+        playbackUrl = "";
+      }
+    }
+
+    if (!playbackUrl) {
+      toast.info("Trailer unavailable", {
+        description: `No CineX trailer is available for ${title} yet.`,
+      });
+      return;
+    }
+
+    setTrailerModalTitle(title);
+    setTrailerModalUrl(playbackUrl);
+    setTrailerModalOpen(true);
+  }, [cityBookableMeta]);
+
+  const scrollToShowtimes = () => {
+    document.getElementById("theatres-scroll-target")?.scrollIntoView({ behavior: "smooth" });
   };
 
   const openSeats = (show: CineXShow) => {
-    if (!isSignedIn) {
-      openSignIn();
+    if (!show?.id) {
+      toast.error("Please select a valid showtime first.");
       return;
     }
-    const screen = screens.find(item => item.id === show.screenId);
-    const theatre = screen ? theatres.find(item => item.id === screen.theatreId) : undefined;
     setSelectedShow(show);
     setCurrentShowId(show.id);
-    setCurrentTheatre(theatre?.name || "Theatre");
-    setCurrentTime(show.showTime);
+    setCurrentTheatre(show.theatreName || "Theatre");
+    setCurrentTime(formatShowTime(show.showTime));
     setShowSeats([]);
     setSeatsLoading(true);
     setSelectedSeats([]);
+    setLiveSeatStatus({});
     setIsSeatOpen(true);
+    try {
+      sessionStorage.setItem(SEAT_SESSION_KEY, JSON.stringify({
+        showId: show.id,
+        theatreName: show.theatreName,
+        showTime: formatShowTime(show.showTime),
+        movieTitle: currentMovie?.title,
+        screenName: show.screenName,
+      }));
+    } catch { /* ignore */ }
     api.get(`/api/shows/${show.id}/seats`, { skipAuth: true })
       .then(res => setShowSeats(res.data || []))
       .catch(() => toast.error("Unable to load seats for this show."))
       .finally(() => setSeatsLoading(false));
   };
+
+  // After Clerk sign-in (modal or redirect), keep the user on the same show/seat page.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !userId) return;
+    let saved: {
+      showId?: number;
+      theatreName?: string;
+      showTime?: string;
+      screenName?: string;
+      pendingSeatNumber?: string;
+      pendingSeatId?: number;
+      pendingPrice?: number;
+    } | null = null;
+    try {
+      const raw = sessionStorage.getItem(SEAT_SESSION_KEY);
+      saved = raw ? JSON.parse(raw) : null;
+    } catch {
+      saved = null;
+    }
+    if (!saved?.showId) return;
+    if (isSeatOpen && currentShowId === saved.showId) return;
+
+    setCurrentShowId(saved.showId);
+    if (saved.theatreName) setCurrentTheatre(saved.theatreName);
+    if (saved.showTime) setCurrentTime(saved.showTime);
+    setIsSeatOpen(true);
+    setSeatsLoading(true);
+    api.get(`/api/shows/${saved.showId}/seats`, { skipAuth: true })
+      .then(res => {
+        setShowSeats(res.data || []);
+        if (saved?.screenName) {
+          setSelectedShow(prev => prev?.id === saved.showId ? prev : {
+            id: saved.showId!,
+            movieId: prev?.movieId || 0,
+            screenId: prev?.screenId || 0,
+            theatreName: saved.theatreName || currentTheatre,
+            screenName: saved.screenName,
+            showTime: saved.showTime || "",
+            showDate: prev?.showDate || "",
+            screeningLanguage: prev?.screeningLanguage,
+            price: prev?.price || 0,
+            availableSeats: prev?.availableSeats || 0,
+          });
+        }
+        if (saved?.pendingSeatId && userId) {
+          const pendingId = Number(saved.pendingSeatId);
+          const pendingNumber = saved.pendingSeatNumber || String(pendingId);
+          const pendingPrice = saved.pendingPrice || 0;
+          return api.post(`/api/shows/${saved.showId}/seats/lock`, {
+            showId: saved.showId,
+            seatIds: [pendingId],
+            userId,
+            action: "SELECT",
+          }, {
+            headers: { "X-Seat-Lock-Session": lockSessionIdRef.current },
+          }).then((lockRes) => {
+            if (lockRes.data === true) {
+              recentlyLockedAtRef.current.set(pendingId, Date.now());
+              setSelectedSeats(prev => prev.some(s => s.seatId === pendingId) ? prev : [...prev, { id: pendingNumber, price: pendingPrice, seatId: pendingId }]);
+            }
+            try { sessionStorage.removeItem(SEAT_SESSION_KEY); } catch { /* ignore */ }
+          }).catch(() => {
+            toast.warning("Seat Unavailable", { description: "The seat you chose before signing in could not be locked." });
+          });
+        }
+      })
+      .catch(() => toast.error("Unable to restore seats for this show."))
+      .finally(() => setSeatsLoading(false));
+  }, [isLoaded, isSignedIn, userId]);
 
   const closeSeats = () => {
     if (selectedSeats.length > 0) {
@@ -381,51 +872,83 @@ export default function App() {
     const showIdVal = currentShowId;
     if (showIdVal == null) return;
 
-    const refreshHeldSeats = () => api.get(`/api/shows/${showIdVal}/seats/held`, { skipAuth: true })
-      .then(res => {
-        if (!Array.isArray(res.data)) return;
+    const refreshHeldSeats = () => {
+      const gen = ++heldPollGenRef.current;
+      return api.get(`/api/shows/${showIdVal}/seats/held`, { skipAuth: true })
+        .then(res => {
+          if (isStaleHeldPoll(gen, heldPollGenRef.current)) return;
+          if (!Array.isArray(res.data)) return;
 
-        const heldIds = new Set(res.data.map((seatId: number) => String(seatId)));
+          const heldIds = new Set(res.data.map((seatId: number) => String(seatId)));
+          const ownIds = new Set(
+            selectedSeatsRef.current
+              .map(seat => seat.seatId)
+              .filter((id): id is number => typeof id === "number")
+              .map(String)
+          );
 
-        setLiveSeatStatus(prev => {
-          const next: Record<string, { status: 'HELD' | 'BOOKED' | 'AVAILABLE'; userId?: string }> = {};
-          heldIds.forEach(seatId => {
-            const existing = prev[seatId];
-            next[seatId] = existing?.status === 'BOOKED'
-              ? existing
-              : { status: 'HELD', userId: existing?.userId };
+          setLiveSeatStatus(prev => {
+            const next: Record<string, { status: 'HELD' | 'BOOKED' | 'AVAILABLE'; userId?: string }> = {};
+            heldIds.forEach(seatId => {
+              const existing = prev[seatId];
+              next[seatId] = existing?.status === 'BOOKED'
+                ? existing
+                : { status: 'HELD', userId: existing?.userId || (ownIds.has(seatId) ? user?.id : undefined) };
+            });
+            Object.entries(prev).forEach(([seatId, info]) => {
+              if (info.status === 'BOOKED') {
+                next[seatId] = info;
+              }
+            });
+            ownIds.forEach(seatId => {
+              if (!next[seatId]) {
+                next[seatId] = { status: 'HELD', userId: user?.id };
+              }
+            });
+            return next;
           });
-          Object.entries(prev).forEach(([seatId, info]) => {
-            if (info.status === 'BOOKED') {
-              next[seatId] = info;
-            }
+
+          const now = Date.now();
+          const expiredSelections = selectedSeatsRef.current.filter(seat => {
+            if (typeof seat.seatId !== "number") return false;
+            return shouldDropLocalSelection({
+              seatId: seat.seatId,
+              heldIds,
+              lockedAt: recentlyLockedAtRef.current.get(seat.seatId),
+              now,
+            });
           });
-          return next;
+          if (expiredSelections.length > 0) {
+            setSelectedSeats(prev => prev.filter(seat =>
+              !(typeof seat.seatId === "number" && expiredSelections.some(expired => expired.seatId === seat.seatId))
+            ));
+            toast.warning("Seat hold expired", {
+              description: `${expiredSelections.map(seat => seat.id).join(", ")} was released. Please select again.`,
+            });
+          }
+        })
+        .catch(err => {
+          console.error("[CineX seats] held-seat poll failed", err);
         });
-
-        const expiredSelections = selectedSeatsRef.current.filter(
-          seat => typeof seat.seatId === "number" && !heldIds.has(String(seat.seatId))
-        );
-        if (expiredSelections.length > 0) {
-          setSelectedSeats(prev => prev.filter(
-            seat => !(typeof seat.seatId === "number" && !heldIds.has(String(seat.seatId)))
-          ));
-          toast.warning("Seat hold expired", {
-            description: `${expiredSelections.map(seat => seat.id).join(", ")} was released. Please select again.`,
-          });
-        }
-      })
-      .catch(() => {});
+    };
     refreshHeldSeats();
     const heldSeatRefresh = window.setInterval(refreshHeldSeats, 15000);
 
-    // Connect to WebSocket via SockJS
-    const socket = new SockJS(`${API_BASE}/ws/seats`);
-    const client = new Client({
-      webSocketFactory: () => socket,
-      reconnectDelay: 5000,
-      onConnect: () => {
-        client.subscribe(`/topic/shows/${showIdVal}/seats`, (message) => {
+    if (!isSignedIn) {
+      return () => window.clearInterval(heldSeatRefresh);
+    }
+
+    void getToken().then((token) => {
+      if (!token) {
+        return;
+      }
+      const socket = new SockJS(`${API_BASE}/ws/seats`);
+      const client = new Client({
+        webSocketFactory: () => socket,
+        reconnectDelay: 5000,
+        connectHeaders: { Authorization: `Bearer ${token}` },
+        onConnect: () => {
+          client.subscribe(`/topic/shows/${showIdVal}/seats`, (message) => {
           if (message.body) {
             try {
               const update = JSON.parse(message.body);
@@ -442,14 +965,24 @@ export default function App() {
                 }
                 return next;
               });
-            } catch (e) {}
+            } catch (e) {
+              console.error("[CineX seats] STOMP payload parse failed", e);
+            }
           }
         });
+      },
+      onStompError: (frame) => {
+        console.error("[CineX seats] STOMP error", frame.headers, frame.body);
+        toast.error("Live seat updates failed", { description: frame.headers["message"] || "STOMP error" });
+      },
+      onWebSocketError: () => {
+        toast.error("Live seat updates failed", { description: "Could not connect to the seat WebSocket." });
       }
     });
 
     client.activate();
     stompClientRef.current = client;
+    });
 
     return () => {
       window.clearInterval(heldSeatRefresh);
@@ -458,86 +991,195 @@ export default function App() {
         stompClientRef.current = null;
       }
     };
-  }, [isSeatOpen, currentMovie, currentShowId, user?.id]);
+  }, [isSeatOpen, currentShowId, isSignedIn, user?.id, getToken]);
 
   const toggleSeat = (id: string, price: number, seatId?: number) => {
+    // Only block briefly while Clerk is genuinely initializing.
+    if (clerkStillInitializing) {
+      toast.info("Please wait", { description: "Checking sign-in status…" });
+      return;
+    }
+
+    if (!isSignedIn || !userId) {
+      if (clerkLikelyMisconfigured || !CLERK_KEY_OK) {
+        toast.error("Sign-in is not configured", {
+          description: "Set a real VITE_CLERK_PUBLISHABLE_KEY (pk_test_…) in cinex-ui/.env.local and restart Vite.",
+        });
+        return;
+      }
+      // Preserve seat page context across Clerk modal / redirect.
+      try {
+        sessionStorage.setItem(SEAT_SESSION_KEY, JSON.stringify({
+          showId: currentShowId,
+          theatreName: currentTheatre,
+          showTime: currentTime,
+          movieTitle: currentMovie?.title,
+          screenName: selectedShow?.screenName,
+          pendingSeatNumber: id,
+          pendingSeatId: seatId,
+          pendingPrice: price,
+        }));
+      } catch { /* ignore */ }
+      toast.info("Sign in to select seats");
+      openSignIn();
+      return;
+    }
+
     if (seatId == null) {
       toast.info("This seat does not have a backend seat ID yet.");
       return;
     }
-    const numId = seatId;
+    const numId = Number(seatId);
     const showIdVal = currentShowId;
-    const clerkId = user ? user.id : "guest_user";
+    const clerkId = userId;
+    if (!Number.isFinite(numId)) {
+      toast.error("Invalid seat ID");
+      return;
+    }
     if (showIdVal == null) {
       toast.info("Real show selection is not available yet.");
       return;
     }
-    const isCurrentlySelected = selectedSeats.some(s => s.id === id);
+    if (lockInFlightRef.current.has(numId)) return;
+
+    const isCurrentlySelected = selectedSeatsRef.current.some(s => s.seatId === numId || s.id === id);
+    const payload = { showId: showIdVal, seatIds: [numId], userId: clerkId, action: isCurrentlySelected ? "RELEASE" : "SELECT" };
 
     if (isCurrentlySelected) {
-      setSelectedSeats(prev => prev.filter(s => s.id !== id));
+      lockInFlightRef.current.add(numId);
       api.delete(`/api/shows/${showIdVal}/seats/lock`, {
         headers: { "X-Seat-Lock-Session": lockSessionIdRef.current },
-        data: { showId: showIdVal, seatIds: [numId], userId: clerkId, action: "RELEASE" }
-      }).catch(() => {});
-    } else {
-      api.post(`/api/shows/${showIdVal}/seats/lock`, {
-        showId: showIdVal, seatIds: [numId], userId: clerkId, action: "SELECT"
-      }, {
-        headers: { "X-Seat-Lock-Session": lockSessionIdRef.current }
-      }).then(res => {
-        if (res.data === true || res.status === 200) {
-          setSelectedSeats(prev => [...prev, { id, price, seatId }]);
+        data: payload
+      }).then(() => {
+        recentlyLockedAtRef.current.delete(numId);
+        setSelectedSeats(prev => prev.filter(s => s.seatId !== numId && s.id !== id));
+      }).catch(err => {
+        toast.error("Could not release seat. Please try again.");
+        console.error("[CineX seats] unlock failed", err);
+      }).finally(() => {
+        lockInFlightRef.current.delete(numId);
+      });
+      return;
+    }
+
+    lockInFlightRef.current.add(numId);
+    void getToken().then(token => {
+      if (!token) {
+        lockInFlightRef.current.delete(numId);
+        toast.info("Sign in to select seats");
+        openSignIn();
+        return;
+      }
+      return api.post(`/api/shows/${showIdVal}/seats/lock`, payload, {
+        // Reuse the token that just passed the sign-in readiness check. This avoids a
+        // second Clerk token lookup racing session restoration after a page refresh.
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "X-Seat-Lock-Session": lockSessionIdRef.current,
         }
+      }).then(res => {
+        if (res.data !== true) {
+          toast.warning("Seat Unavailable", { description: `Seat ${id} could not be locked.` });
+          return;
+        }
+        heldPollGenRef.current += 1;
+        recentlyLockedAtRef.current.set(numId, Date.now());
+        setSelectedSeats(prev => prev.some(s => s.seatId === numId) ? prev : [...prev, { id, price, seatId: numId }]);
+        try { sessionStorage.removeItem(SEAT_SESSION_KEY); } catch { /* ignore */ }
       }).catch(err => {
         if (err.response?.status === 409) {
           toast.warning("Seat Unavailable", { description: `Seat ${id} is currently held by another user. Please choose another seat.` });
+        } else if (err.response?.status === 401) {
+          toast.info("Sign in to select seats");
+          openSignIn();
         } else {
-          toast.error("Seat lock failed. Please try again.");
+          toast.error(getApiErrorMessage(err, "Seat lock failed. Please try again."));
         }
         api.get(`/api/shows/${showIdVal}/seats`, { skipAuth: true })
           .then(res => setShowSeats(res.data || []))
           .catch(() => {});
+      }).finally(() => {
+        lockInFlightRef.current.delete(numId);
       });
-    }
-  };
-
-  const getSeatStatusClass = (id: string, hardcodedBooked: boolean, seatId?: number, backendStatus?: string) => {
-    const numId = seatId == null ? id : String(seatId);
-    const liveInfo = liveSeatStatus[numId] || liveSeatStatus[id];
-    if (backendStatus === 'BOOKED') return 'booked';
-    if (liveInfo && liveInfo.status === 'BOOKED') return 'booked';
-    if (liveInfo && liveInfo.status === 'HELD' && liveInfo.userId !== (user ? user.id : "guest_user")) return 'held';
-    if (hardcodedBooked) return 'booked';
-    if (selectedSeats.some(s => s.id === id)) return 'selected';
-    return '';
-  };
-
-  const isSeatDisabled = (id: string, hardcodedBooked: boolean, seatId?: number, backendStatus?: string) => {
-    const numId = seatId == null ? id : String(seatId);
-    const liveInfo = liveSeatStatus[numId] || liveSeatStatus[id];
-    if (backendStatus === 'BOOKED') return true;
-    if (liveInfo && (liveInfo.status === 'BOOKED' || (liveInfo.status === 'HELD' && liveInfo.userId !== (user ? user.id : "guest_user")))) return true;
-    return hardcodedBooked;
+    }).catch(() => {
+      lockInFlightRef.current.delete(numId);
+      toast.error("Could not get your session token. Please sign in again.");
+      openSignIn();
+    });
   };
 
   const totalPrice = selectedSeats.reduce((acc, s) => acc + s.price, 0);
-  const seatsByRow = showSeats.reduce<Record<string, CineXSeat[]>>((rows, seat) => {
-    const row = seat.seatNumber.match(/^[A-Za-z]+/)?.[0] || "Seats";
-    (rows[row] ||= []).push(seat);
-    return rows;
-  }, {});
+  const selectedSeatIds = useMemo(
+    () => new Set(selectedSeats.map((s) => s.seatId).filter((id): id is number => typeof id === "number")),
+    [selectedSeats]
+  );
+
+  const clearCityDependentBookingState = useCallback(() => {
+    setIsSeatOpen(false);
+    setIsPaymentOpen(false);
+    setPaymentSuccess(false);
+    setProcessing(false);
+    setPaymentError("");
+    setSelectedSeats([]);
+    setLiveSeatStatus({});
+    setCurrentShowId(null);
+    setSelectedShow(null);
+    setShowSeats([]);
+    setCurrentTheatre("");
+    setCurrentTime("");
+    try {
+      sessionStorage.removeItem(SEAT_SESSION_KEY);
+    } catch { /* ignore */ }
+  }, []);
 
   const selectCity = (city: string) => {
+    const changed = city !== currentCity;
     setCurrentCity(city);
+    localStorage.setItem("cinex_city", city);
     setCityModalOpen(false);
-    setCitySearch("");
+    setHomeScreeningLang("all");
+    setDetailScreeningLang("all");
+
+    // The picker closes on select, so say it here too: the user searched for a city we track but
+    // do not screen in yet, and needs to know that before wondering where the showtimes went.
+    if (resolveCityAvailabilityStatus(availableCities, city) === "no-theatres") {
+      toast.info(`${city} is not listed on CineX yet`, {
+        description: "We have no theatres there so far. Pick a nearby city to book tickets.",
+      });
+    }
+
+    if (changed) {
+      clearCityDependentBookingState();
+      if (isDetailOpen && currentMovieRef.current) {
+        const movie = currentMovieRef.current;
+        const tmdbId = Number(movie.tmdbId ?? movie.id);
+        loadShowsForMovie(movie, city).then(() => fetchCityCinemaData(city, "all"));
+        if (tmdbId) {
+          fetchTmdbMovieDetails(tmdbId).catch(() => null);
+        }
+      } else if (isDetailOpen) {
+        setIsDetailOpen(false);
+        setCurrentMovie(null);
+      }
+    }
   };
 
-  const filteredCities = CITIES.filter(c =>
-    c.name.toLowerCase().includes(citySearch.toLowerCase()) ||
-    c.state.toLowerCase().includes(citySearch.toLowerCase())
-  );
+  const closeCitySelector = () => {
+    if (currentCity) setCityModalOpen(false);
+  };
+
+  useEffect(() => {
+    if (!isPaymentOpen || !isSignedIn) return;
+    let cancelled = false;
+    api.get("/api/wallet")
+      .then((res) => {
+        if (!cancelled) setWalletBalance(Number(res.data?.balance ?? 0));
+      })
+      .catch(() => {
+        if (!cancelled) setWalletBalance(null);
+      });
+    return () => { cancelled = true; };
+  }, [isPaymentOpen, isSignedIn]);
 
   const processPayment = () => {
     setProcessing(true);
@@ -549,25 +1191,18 @@ export default function App() {
       return;
     }
     
-    if (!(window as any).Razorpay) {
+    if (paymentMethod === "RAZORPAY" && !(window as any).Razorpay) {
       setPaymentError("Razorpay SDK failed to load. Please check your network connection or disable adblockers.");
       setProcessing(false);
       return;
     }
 
     const reqBody = {
-      clerkUserId: user.id,
       showId: currentShowId,
       seatIds: selectedSeats
         .map(seat => seat.seatId)
         .filter((seatId): seatId is number => typeof seatId === "number"),
-      movieTitle: currentMovie?.title || "Movie",
-      posterPath: currentMovie?.poster_path ? `${IMG_BASE_URL}${currentMovie.poster_path}` : "",
-      theatreName: currentTheatre || "CineX Theatre",
-      cityName: currentCity || "Chennai",
-      showDate: new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
-      showTime: currentTime || "Now",
-      amount: totalPrice
+      userEmail: user.primaryEmailAddress?.emailAddress,
     };
 
     if (currentShowId == null || reqBody.seatIds.length === 0) {
@@ -580,10 +1215,39 @@ export default function App() {
     api.post(`/api/bookings`, reqBody)
       .then(res => {
         const bookingId = res.data.bookingId;
+        if (paymentMethod === "WALLET") {
+          return api.post(`/api/payments/wallet?bookingId=${bookingId}`)
+            .then(async (walletRes) => {
+              const ticketToken = walletRes.data?.ticketToken as string | undefined;
+              let confirmed = {
+                bookingId, movieTitle: currentMovie?.title || "Movie", posterPath: currentMovie?.poster_path || "",
+                theatreName: selectedShow?.theatreName || currentTheatre || "CineX Theatre", screenName: selectedShow?.screenName,
+                screeningLanguage: selectedShow?.screeningLanguage, showDate: selectedShow?.showDate || "",
+                showTime: selectedShow?.showTime ? formatShowTime(selectedShow.showTime) : currentTime,
+                seats: selectedSeats.map(s => s.id), totalAmount: totalPrice, ticketToken, ticketQrUrl: undefined as string | undefined,
+              };
+              try {
+                const bookingRes = await api.get(`/api/bookings/${bookingId}`);
+                const booking = bookingRes.data || {};
+                confirmed = { ...confirmed, movieTitle: booking.movieTitle || confirmed.movieTitle,
+                  posterPath: booking.posterPath || confirmed.posterPath, theatreName: booking.theatreName || confirmed.theatreName,
+                  screenName: booking.screenName || confirmed.screenName, showDate: booking.showDate || confirmed.showDate,
+                  showTime: booking.showTime ? formatShowTime(booking.showTime) : confirmed.showTime,
+                  seats: booking.seatNumbers || booking.seats || confirmed.seats,
+                  totalAmount: booking.totalAmount ?? booking.amount ?? confirmed.totalAmount, ticketToken: booking.ticketToken || ticketToken };
+              } catch { /* retain local confirmation */ }
+              if (confirmed.ticketToken) {
+                try { confirmed.ticketQrUrl = await fetchAuthenticatedBlobUrl(`/api/tickets/qr/${confirmed.ticketToken}`); } catch { /* optional preview */ }
+              }
+              setWalletBalance((balance) => balance == null ? balance : Math.max(0, balance - confirmed.totalAmount));
+              setProcessing(false); setLastBooking(confirmed); setPaymentSuccess(true);
+              toast.success("Wallet payment confirmed!", { description: `Your tickets for ${confirmed.movieTitle} are ready.` });
+              fetchUserBookings();
+            });
+        }
         // Step 2: Create Razorpay Order on backend
         return api.post(`/api/payments/create-order`, {
           bookingId: bookingId,
-          clerkUserId: user.id
         }).then(orderRes => {
           const orderData = orderRes.data;
           
@@ -599,26 +1263,52 @@ export default function App() {
               // Step 3: Verify signature on backend
               api.post(`/api/payments/verify`, {
                 bookingId: bookingId,
-                clerkUserId: user.id,
                 razorpayOrderId: response.razorpay_order_id,
                 razorpayPaymentId: response.razorpay_payment_id,
                 razorpaySignature: response.razorpay_signature
               })
-              .then(() => {
-                setProcessing(false);
-                setLastBooking({
+              .then(async (verifyRes) => {
+                const ticketToken = verifyRes.data?.ticketToken as string | undefined;
+                let confirmed = {
                   bookingId,
                   movieTitle: currentMovie?.title || "Movie",
                   posterPath: currentMovie?.poster_path || "",
-                  theatreName: currentTheatre || "CineX Theatre",
-                  showDate: selectedShow?.showDate || new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }),
-                  showTime: currentTime || "Now",
+                  theatreName: selectedShow?.theatreName || currentTheatre || "CineX Theatre",
+                  screenName: selectedShow?.screenName,
+                  screeningLanguage: selectedShow?.screeningLanguage,
+                  showDate: selectedShow?.showDate || "",
+                  showTime: selectedShow?.showTime ? formatShowTime(selectedShow.showTime) : currentTime,
                   seats: selectedSeats.map(s => s.id),
                   totalAmount: totalPrice,
-                });
+                  ticketToken,
+                  ticketQrUrl: undefined as string | undefined,
+                };
+                try {
+                  const bookingRes = await api.get(`/api/bookings/${bookingId}`);
+                  const b = bookingRes.data || {};
+                  confirmed = {
+                    ...confirmed,
+                    movieTitle: b.movieTitle || confirmed.movieTitle,
+                    posterPath: b.posterPath || confirmed.posterPath,
+                    theatreName: b.theatreName || confirmed.theatreName,
+                    screenName: b.screenName || confirmed.screenName,
+                    showDate: b.showDate || confirmed.showDate,
+                    showTime: b.showTime ? formatShowTime(b.showTime) : confirmed.showTime,
+                    seats: b.seatNumbers || b.seats || confirmed.seats,
+                    totalAmount: b.totalAmount ?? b.amount ?? confirmed.totalAmount,
+                    ticketToken: b.ticketToken || ticketToken,
+                  };
+                } catch { /* keep local confirmation data */ }
+                if (confirmed.ticketToken) {
+                  try {
+                    confirmed.ticketQrUrl = await fetchAuthenticatedBlobUrl(`/api/tickets/qr/${confirmed.ticketToken}`);
+                  } catch { /* QR preview optional */ }
+                }
+                setProcessing(false);
+                setLastBooking(confirmed);
                 setPaymentSuccess(true);
                 toast.success("Payment Confirmed!", {
-                  description: `Your tickets for ${currentMovie?.title || 'the movie'} are ready.`
+                  description: `Your tickets for ${confirmed.movieTitle} are ready.`
                 });
                 fetchUserBookings();
               })
@@ -688,19 +1378,54 @@ export default function App() {
     };
   }, [isHistoryOpen, isSignedIn, userBookings]);
 
-  const filteredShowsForDate = shows.filter(s => !selectedDetailDate || s.showDate === selectedDetailDate);
-  const showDates = [...new Set(shows.map(s => s.showDate))].sort();
+  const languageFilteredShows = shows.filter((show) =>
+    detailScreeningLang === "all" || show.screeningLanguage === detailScreeningLang
+  );
+  const filteredShowsForDate = languageFilteredShows.filter(s => !selectedDetailDate || s.showDate === selectedDetailDate);
+  const showDates = [...new Set(languageFilteredShows.map(s => s.showDate))].sort();
 
-  const formatShowDate = (dateStr: string) => {
-    if (!dateStr) return "TODAY";
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return dateStr.toUpperCase();
-    return d.toLocaleDateString("en-US", { weekday: "short", day: "numeric" }).toUpperCase();
-  };
+  const groupedTheatreShows = useMemo(() => {
+    const groups = new Map<string, {
+      theatreId: number;
+      theatreName: string;
+      city: string;
+      screenName: string;
+      languageGroups: { language: string; shows: CineXShow[] }[];
+    }>();
+    filteredShowsForDate.forEach((show) => {
+      const key = String(show.theatreId || show.screenId);
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          theatreId: show.theatreId || show.screenId,
+          theatreName: show.theatreName || `Screen ${show.screenId}`,
+          city: show.city || currentCity,
+          screenName: show.screenName || "",
+          languageGroups: [],
+        };
+        groups.set(key, group);
+      }
+      const lang = show.screeningLanguage || "General";
+      let langGroup = group.languageGroups.find((entry) => entry.language === lang);
+      if (!langGroup) {
+        langGroup = { language: lang, shows: [] };
+        group.languageGroups.push(langGroup);
+      }
+      langGroup.shows.push(show);
+    });
+    groups.forEach((group) => {
+      group.languageGroups.forEach((langGroup) => {
+        langGroup.shows.sort((a, b) => a.showTime.localeCompare(b.showTime));
+      });
+    });
+    return Array.from(groups.values());
+  }, [filteredShowsForDate, currentCity]);
+
+  const formatShowDateLabel = formatShowDate;
 
   const renderFooter = () => (
     <footer className="cx-footer">
-      <div className="cx-footer-logo">CINEX</div>
+      <CinexLogo height={28} className="cx-footer-logo" onClick={() => { closeDetail(); closeSeats(); setIsPaymentOpen(false); setIsHistoryOpen(false); navigate("/"); }} />
       <div className="cx-footer-links">
         <Link to="/about">Sitemap</Link>
         <Link to="/support">Legal</Link>
@@ -715,9 +1440,37 @@ export default function App() {
     <nav className="cx-mobile-nav">
       <div className="cx-mobile-nav-inner">
         <Link to="/" className={location.pathname === "/" ? "active" : ""}><Film size={20} />Movies</Link>
-        <a href="#" onClick={(e) => { e.preventDefault(); document.querySelector<HTMLInputElement>(".cx-search input")?.focus(); }}><Search size={20} />Search</a>
+        <a
+          href="#"
+          className={mobileSearchOpen || searchQuery ? "active" : ""}
+          onClick={(e) => { e.preventDefault(); openMobileSearch(); }}
+        >
+          <Search size={20} />Search
+        </a>
         <a href="#" className={isHistoryOpen ? "active" : ""} onClick={(e) => { e.preventDefault(); setIsHistoryOpen(true); }}><Ticket size={20} />Bookings</a>
-        <Link to="/profile" className={location.pathname === "/profile" ? "active" : ""}><User size={20} />Profile</Link>
+        {isSignedIn ? (
+          <Link to="/profile" className={location.pathname === "/profile" ? "active" : ""}>
+            <User size={20} />Profile
+          </Link>
+        ) : (
+          <a
+            href="#signin"
+            className=""
+            onClick={(e) => {
+              e.preventDefault();
+              if (clerkStillInitializing) return;
+              if (!CLERK_KEY_OK || clerkLikelyMisconfigured) {
+                toast.error("Sign-in is not configured", {
+                  description: "Set VITE_CLERK_PUBLISHABLE_KEY=pk_test_… in cinex-ui/.env.local and restart Vite.",
+                });
+                return;
+              }
+              openSignIn();
+            }}
+          >
+            <Lock size={20} />Sign In
+          </a>
+        )}
       </div>
     </nav>
   );
@@ -728,57 +1481,104 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div>
-      <Toaster position="top-right" theme="dark" richColors />
+    <div className="cx-app-shell">
+      <CinexToaster />
+
+      {!CLERK_KEY_OK && (
+        <div className="cx-error-banner" role="status">
+          Clerk is not configured. Set <code>VITE_CLERK_PUBLISHABLE_KEY=pk_test_…</code> in{" "}
+          <code>cinex-ui/.env.local</code>, then restart the Vite server. You can browse seats without signing in;
+          locking seats requires a valid Clerk key.
+        </div>
+      )}
 
       {/* ===== HEADER ===== */}
-      <header className="cx-header">
+      <header className="cx-header" ref={headerRef}>
         <div className="cx-header-inner">
-          <div className="cx-logo" onClick={() => { closeDetail(); setIsHistoryOpen(false); navigate("/"); }}>CINEX</div>
+          <CinexLogo height={34} className="cx-logo" onClick={() => { closeDetail(); closeSeats(); setIsPaymentOpen(false); setIsHistoryOpen(false); navigate("/"); }} />
           <nav className="cx-nav">
             <Link to="/" className={location.pathname === "/" ? "active" : ""}>Movies</Link>
             <Link to="/events" className={location.pathname === "/events" ? "active" : ""}>Theatres</Link>
           </nav>
-          <div className="cx-search">
+          <div className="cx-search cx-search-desktop">
             <Search size={16} color="var(--text3)" />
             <input
-              type="text"
+              type="search"
               placeholder="Search movies..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === "Escape") clearSearch(); }}
+              ref={searchInputRef}
+              aria-label="Search movies"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                className="cx-search-clear"
+                onClick={() => { setSearchQuery(""); searchInputRef.current?.focus(); }}
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
           <div className="cx-header-actions">
             <button className="cx-location" onClick={() => setCityModalOpen(true)}>
-              <MapPin size={16} /> Location
+              <MapPin size={16} />
+              {currentCity || "Select city"}
             </button>
-            <div id="auth-section">
-              <Show when="signed-out">
-                <SignInButton mode="modal">
-                  <button className="cx-btn-signin">Sign In</button>
-                </SignInButton>
-              </Show>
-              <Show when="signed-in">
-                <div className="cx-user-menu">
-                  <Link to="/profile" className="cx-hide-mobile">Profile</Link>
-                  {isAdminUser && (
-                    <span onClick={() => setIsAdminOpen(true)} style={{ cursor: "pointer" }}>Admin</span>
-                  )}
-                  <span onClick={() => setIsHistoryOpen(true)} style={{ cursor: "pointer" }}>Tickets</span>
-                  <Link to="/wishlist" className="cx-hide-mobile">Wishlist ({wishlistCount})</Link>
-                  <UserButton />
-                </div>
-              </Show>
+            <div id="auth-section" className="cx-auth-controls">
+              <AuthControls
+                isAdminUser={isAdminUser}
+                wishlistCount={wishlistCount}
+                onOpenTickets={() => setIsHistoryOpen(true)}
+                onOpenAdmin={() => setIsAdminOpen(true)}
+              />
             </div>
           </div>
         </div>
+        {(mobileSearchOpen || searchQuery) && (
+          <div className="cx-mobile-search">
+            <div className="cx-search">
+              <Search size={16} color="var(--text3)" />
+              <input
+                type="search"
+                placeholder="Search movies..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === "Escape") clearSearch(); }}
+                ref={mobileSearchInputRef}
+                aria-label="Search movies"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  className="cx-search-clear"
+                  onClick={() => { setSearchQuery(""); mobileSearchInputRef.current?.focus(); }}
+                  aria-label="Clear search"
+                >
+                  <X size={14} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="cx-search-clear"
+                  onClick={clearSearch}
+                  aria-label="Close search"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* ── Main Dashboard Content ── */}
       <main>
         {apiError && (
           <div className="cx-error-banner">
-            Could not connect to the backend server. Please verify Spring Boot is running on port 8081.
+            Unable to load movies right now. Please try again.
           </div>
         )}
 
@@ -795,16 +1595,52 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            ) : debouncedSearchQuery.trim().length >= 2 ? (
+              <div className="cx-page" style={{ paddingTop: '2rem' }}>
+                <div className="cx-section-head">
+                  <h2 className="cx-section-title">Search Results for "{debouncedSearchQuery}"</h2>
+                </div>
+                
+                {isSearching ? (
+                  <div className="cx-movie-row">
+                    {[1,2,3,4,5,6].map(i => (
+                      <div key={i} className="cx-movie-card">
+                        <div className="shad-skeleton cx-poster-wrap" style={{ aspectRatio: "2/3" }} />
+                      </div>
+                    ))}
+                  </div>
+                ) : searchError ? (
+                  <div className="cx-empty-state">
+                    <p>{searchError}</p>
+                  </div>
+                ) : searchResults.length > 0 ? (
+                  <div className="cx-movie-grid">
+                    {searchResults.map((movie) => (
+                      <MovieCard
+                        key={movie.id}
+                        movie={movie}
+                        onClick={() => handleMovieClick(movie)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="cx-empty-state" style={{ textAlign: 'center', padding: '4rem 1rem', color: 'var(--text2)' }}>
+                    <Search size={48} style={{ margin: '0 auto 1rem', opacity: 0.2 }} />
+                    <h3>No movies found</h3>
+                    <p>We couldn't find anything matching "{debouncedSearchQuery}".</p>
+                  </div>
+                )}
+              </div>
             ) : (
               <>
-                {carouselMovies.length > 0 && !searchQuery && (
-                  <section className="cx-hero" style={{ marginTop: "1.5rem" }}>
-                    {carouselMovies.map((movie, idx) => (
-                      <div key={movie.id} style={{ display: idx === currentSlide ? "block" : "none", position: "absolute", inset: 0 }}>
-                        <div
-                          className="cx-hero-bg"
-                          style={{ backgroundImage: `url(${IMG_ORIGINAL_URL}${movie.backdrop_path})` }}
-                        />
+                {carouselMovies.length > 0 && (
+                  <div className="cx-home-hero-slot">
+                  <section className="cx-hero">
+                    {carouselMovies.map((movie, idx) => {
+                      const backdropUrl = resolveMovieBackdropUrl(movie);
+                      return (
+                      <div key={movie.id} className={`cx-hero-slide${idx === currentSlide ? " is-active" : ""}`}>
+                        <MediaCoverImage src={backdropUrl} loading={idx === 0 ? "eager" : "lazy"} />
                         <div className="cx-hero-overlay" />
                         <div className="cx-hero-content">
                           <div className="cx-hero-tags">
@@ -818,13 +1654,14 @@ export default function App() {
                             <button className="btn-primary" onClick={() => handleMovieClick(movie)}>
                               <Ticket size={16} /> Book Tickets
                             </button>
-                            <button className="btn-outline" onClick={() => toast.info("Trailer", { description: `Trailer for ${movie.title}` })}>
+                            <button className="btn-outline" onClick={() => openTrailer(movie)}>
                               <Play size={16} /> Watch Trailer
                             </button>
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     {carouselMovies.length > 1 && (
                       <div className="cx-carousel-dots">
                         {carouselMovies.map((_, idx) => (
@@ -833,34 +1670,110 @@ export default function App() {
                       </div>
                     )}
                   </section>
+                  </div>
                 )}
 
                 <div className="cx-page">
                   <section className="cx-section">
-                    <div className="cx-section-head">
-                      <h2 className="cx-section-title">Now Showing</h2>
-                      <div className="cx-filters">
-                        <button className="cx-filter-btn">All Genres</button>
-                        <button className="cx-filter-btn">Any Format</button>
+                    <div className="cx-section-head" style={{ alignItems: "center", marginBottom: "1.25rem" }}>
+                      <div>
+                        <h2 style={{ fontSize: "1.55rem", fontWeight: 800, color: "#fff", letterSpacing: "-0.01em", margin: 0 }}>
+                          Recommended Movies
+                        </h2>
+                        {currentCity && (
+                          <p style={{ fontSize: "0.84rem", color: "var(--text2)", marginTop: "0.2rem" }}>
+                            Now showing in {currentCity}
+                          </p>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
+                        <div className="cx-filters">
+                          {cityCatalogLoading && (
+                            <span className="cx-filter-loading" aria-live="polite">Updating showtimes…</span>
+                          )}
+                          <button
+                            className={`cx-filter-btn ${homeScreeningLang === "all" ? "active" : ""}`}
+                            onClick={() => setHomeScreeningLang("all")}
+                          >
+                            All Languages
+                          </button>
+                          {cityLanguages.map((lang) => (
+                            <button
+                              key={lang}
+                              className={`cx-filter-btn ${homeScreeningLang === lang ? "active" : ""}`}
+                              onClick={() => setHomeScreeningLang(lang)}
+                            >
+                              {lang}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="cx-see-all-link"
+                          onClick={() => setHomeScreeningLang("all")}
+                          style={{
+                            color: "#FF3D5A",
+                            fontSize: "0.92rem",
+                            fontWeight: 600,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.15rem",
+                            cursor: "pointer",
+                            background: "none",
+                            border: "none",
+                            padding: 0
+                          }}
+                        >
+                          See All &rsaquo;
+                        </button>
                       </div>
                     </div>
-                    <div className="cx-movie-row">
-                      {filterMovies(moviesNowPlaying).map(m => (
-                        <div key={m.id} className="cx-movie-card" onClick={() => handleMovieClick(m)}>
-                          <div className="cx-poster-wrap">
-                            <img src={m.poster_path?.startsWith("http") ? m.poster_path : `${IMG_BASE_URL}${m.poster_path}`} alt={m.title} loading="lazy" />
-                            <span className="cx-rating-badge"><Star size={10} fill="var(--gold)" color="var(--gold)" /> {(m.vote_average || 8).toFixed(1)}</span>
-                            {toggleWishlist && (
-                              <button className="cx-wish-btn" onClick={(e) => { e.stopPropagation(); toggleWishlist(m); }}>
-                                <Heart size={14} fill={isWishlisted(m.id) ? "var(--coral)" : "none"} color={isWishlisted(m.id) ? "var(--coral)" : "#fff"} />
-                              </button>
-                            )}
-                          </div>
-                          <div className="cx-movie-title">{m.title}</div>
-                          <div className="cx-movie-meta">{getGenres(m.genre_ids)} • 2h 15m</div>
-                        </div>
+                    <MovieCarousel ariaLabel={`Now showing movies in ${currentCity}`}>
+                      {loading && (
+                        <>
+                          {[1, 2, 3, 4, 5, 6].map((i) => (
+                            <div key={i} className="cx-movie-card cx-movie-card-ref">
+                              <div className="shad-skeleton cx-poster-wrap cx-poster-wrap-ref" style={{ aspectRatio: "2/3" }} />
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {!loading && apiError && moviesNowPlaying.length === 0 && (
+                        <p className="cx-empty-msg">Unable to load movies right now. Please try again.</p>
+                      )}
+                      {!loading && cityCatalogError && (
+                        <p className="cx-empty-msg">{cityCatalogError}</p>
+                      )}
+                      {!loading && !currentCity && (
+                        <p className="cx-empty-msg">Choose your city to see available movies and showtimes.</p>
+                      )}
+                      {!loading && currentCity && cityHasNoTheatres && (
+                        <p className="cx-empty-msg">
+                          {currentCity} is not listed on CineX yet — we have no theatres there so far,
+                          so there is nothing to book. Pick a nearby city to continue.
+                        </p>
+                      )}
+                      {!loading && currentCity && !cityHasNoTheatres && moviesNowPlaying.length > 0 && bookableCountInCity === 0 && (
+                        <p className="cx-empty-msg">
+                          Currently showing in India — no CineX showtimes available in {currentCity} right now.
+                        </p>
+                      )}
+                      {!loading && currentCity && !cityHasNoTheatres && moviesNowPlaying.length > 0
+                        && homeScreeningLang !== "all" && nowShowingMovies.length === 0 && (
+                        <p className="cx-empty-msg">
+                          No CineX showtimes in {homeScreeningLang} for {currentCity}.
+                        </p>
+                      )}
+                      {!loading && nowShowingMovies.map((m) => (
+                        <MovieCard
+                          key={m.id}
+                          movie={m}
+                          onClick={() => handleMovieClick(m)}
+                          isWishlisted={isWishlisted(m.id)}
+                          onToggleWishlist={toggleWishlist}
+                        />
                       ))}
-                    </div>
+                    </MovieCarousel>
                   </section>
 
                   <section className="cx-section">
@@ -869,10 +1782,14 @@ export default function App() {
                       <span className="cx-section-link">View All</span>
                     </div>
                     <div className="cx-coming-list">
-                      {filterMovies(moviesUpcoming).slice(0, 4).map(m => (
+                      {loading && <p className="cx-empty-msg">Loading movies...</p>}
+                      {!loading && upcomingDisplay.length === 0 && (
+                        <p className="cx-empty-msg">Unable to load upcoming movies. Please try again.</p>
+                      )}
+                      {upcomingDisplay.slice(0, 4).map(m => (
                         <div key={m.id} className="cx-coming-card" onClick={() => handleMovieClick(m)}>
                           <div className="cx-coming-thumb">
-                            <img src={m.poster_path?.startsWith("http") ? m.poster_path : `${IMG_BASE_URL}${m.poster_path}`} alt={m.title} loading="lazy" />
+                            <img src={resolveMediaUrl(m.poster_path, "poster")} alt={m.title} loading="lazy" />
                           </div>
                           <div>
                             <div className="cx-coming-date">{m.release_date ? new Date(m.release_date).toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase() : "SOON"}</div>
@@ -889,9 +1806,16 @@ export default function App() {
                       <h2 className="cx-section-title">Trending Now</h2>
                     </div>
                     <div className="cx-trending-grid">
-                      {filterMovies(moviesTrending).slice(0, 3).map((m, idx) => (
+                      {loading && <p className="cx-empty-msg">Loading trending movies...</p>}
+                      {!loading && trendingDisplay.length === 0 && (
+                        <p className="cx-empty-msg">Unable to load trending movies. Please try again.</p>
+                      )}
+                      {trendingDisplay.slice(0, 3).map((m, idx) => (
                         <div key={m.id} className={`cx-trend-card ${idx === 0 ? "featured" : ""}`} onClick={() => handleMovieClick(m)}>
-                          <div className="cx-trend-bg" style={{ backgroundImage: `url(${IMG_ORIGINAL_URL}${m.backdrop_path || m.poster_path})` }} />
+                          <div className="cx-trend-bg" style={{ backgroundImage: (() => {
+                            const url = resolveMediaUrl(m.backdrop_path || m.poster_path, "backdrop") || resolveMediaUrl(m.poster_path, "poster");
+                            return url ? `url(${url})` : undefined;
+                          })() }} />
                           <div className="cx-trend-overlay" />
                           <span className="cx-trend-rank">{idx + 1}</span>
                           <div className="cx-trend-body">
@@ -960,61 +1884,35 @@ export default function App() {
             { title: "Resilient Circuit Breaker Catalog", subtitle: "Defensive API fallbacks ensuring 100% uptime even if external TMDB APIs go offline", badge: "Resilience", tag: "High Availability" }
           ]} />} />
           <Route path="/wishlist" element={<WishlistPage wishlist={wishlist} onRemove={removeWishlist} onBookMovie={m => handleMovieClick(m)} />} />
-          <Route path="/profile" element={<ProfilePage wishlistCount={wishlistCount} bookingsCount={userBookings.length} onOpenBookings={() => setIsHistoryOpen(true)} />} />
-          <Route path="/my-bookings" element={<ProfilePage wishlistCount={wishlistCount} bookingsCount={userBookings.length} onOpenBookings={() => setIsHistoryOpen(true)} />} />
+          <Route path="/profile" element={<ProfilePage wishlistCount={wishlistCount} bookings={userBookings} ticketQrUrls={ticketQrUrls} onOpenBookings={() => setIsHistoryOpen(true)} onBookMovie={m => handleMovieClick(m)} onRefreshBookings={fetchUserBookings} />} />
+          <Route path="/wallet" element={<WalletPage onClaimCoupon={() => setCouponOpen(true)} />} />
+          <Route path="/my-bookings" element={<ProfilePage wishlistCount={wishlistCount} bookings={userBookings} ticketQrUrls={ticketQrUrls} onOpenBookings={() => setIsHistoryOpen(true)} onBookMovie={m => handleMovieClick(m)} onRefreshBookings={fetchUserBookings} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
 
+      <CouponRedeemModal open={couponOpen} isSignedIn={isSignedIn} onClose={dismissCoupon} onSignIn={openSignIn} onRedeemed={completeCouponRedemption} />
+      <TrailerModal
+        open={trailerModalOpen}
+        title={trailerModalTitle}
+        playbackUrl={trailerModalUrl}
+        onClose={closeTrailerModal}
+      />
+
       {/* ── City Picker Modal ── */}
       <AnimatePresence>
         {cityModalOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="modal-overlay active"
-            onClick={() => { setCityModalOpen(false); setCitySearch(""); }}
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="city-modal shad-card"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="city-modal-header">
-                <h2>📍 Select Your City</h2>
-                <button className="btn-close-modal" onClick={() => { setCityModalOpen(false); setCitySearch(""); }}>✕</button>
-              </div>
-              <div className="city-modal-search">
-                <input
-                  type="text"
-                  placeholder="Search for your city..."
-                  value={citySearch}
-                  onChange={e => setCitySearch(e.target.value)}
-                  autoFocus
-                />
-              </div>
-              <div className="city-modal-grid">
-                {filteredCities.length === 0 ? (
-                  <p style={{ color: "var(--text-muted)", textAlign: "center", gridColumn: "1 / -1", padding: "2rem" }}>No cities matching your search</p>
-                ) : (
-                  filteredCities.map(c => (
-                    <div
-                      key={c.name}
-                      className={`city-card ${c.name === currentCity ? "active" : ""}`}
-                      onClick={() => selectCity(c.name)}
-                    >
-                      <div className="city-card-emoji">{c.emoji}</div>
-                      <div className="city-card-name">{c.name}</div>
-                      <div className="city-card-state">{c.state}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
+          <CitySelectorModal
+            open={cityModalOpen}
+            cities={availableCities}
+            currentCity={currentCity}
+            onSelectCity={selectCity}
+            onClose={closeCitySelector}
+            listLoading={cityBootstrapLoading}
+            listError={cityListError}
+            onRetryList={loadCities}
+            required={!currentCity}
+          />
         )}
       </AnimatePresence>
 
@@ -1022,34 +1920,265 @@ export default function App() {
       <div className={`movie-detail-view ${isDetailOpen ? "active" : ""}`} ref={detailRef}>
         {currentMovie && (
           <>
-            <div className="detail-hero">
-              <div className="detail-backdrop" style={{ backgroundImage: `url(${IMG_ORIGINAL_URL}${currentMovie.backdrop_path})` }} />
-              <button className="detail-back" onClick={closeDetail}><ArrowLeft size={18} /></button>
-              <div className="detail-hero-inner">
-                <div className="detail-poster">
-                  <img src={`${IMG_BASE_URL}${currentMovie.poster_path}`} alt={currentMovie.title} />
-                </div>
-                <div className="detail-info">
-                  <h1 className="detail-title">{currentMovie.title}</h1>
-                  <div className="detail-badges">
-                    <span className="detail-rating"><Star size={14} fill="var(--coral)" color="var(--coral)" /> {(currentMovie.vote_average || 8.4).toFixed(1)}</span>
-                    <span className="detail-pill-tag">2h 34m</span>
-                    <span className="detail-pill-tag">{getLangLabel(currentMovie.original_language)}</span>
-                    <span className="detail-pill-tag">{getGenres(currentMovie.genre_ids)}</span>
-                    <span className="detail-pill-tag">IMAX 3D</span>
-                    <span className="detail-pill-tag">4DX</span>
-                  </div>
-                  <p className="detail-overview">
-                    {currentMovie.overview || "Witness the ultimate entertainment spectacle with state-of-the-art Dolby Atmos and IMAX laser projection."}
-                  </p>
-                  <button className="btn-outline" onClick={() => toast.info("Trailer", { description: `Playing trailer for ${currentMovie.title}` })}>
-                    <Play size={16} /> Watch Trailer
-                  </button>
-                </div>
-              </div>
+            <div className="detail-hero-banner">
+              <MediaCoverImage src={resolveMovieBackdropUrl(currentMovie)} />
+              <div className="detail-hero-gradient" aria-hidden="true" />
+              <button type="button" className="detail-back" onClick={closeDetail} aria-label="Go back">
+                <ArrowLeft size={18} />
+              </button>
+              <button
+                type="button"
+                className="detail-hero-play"
+                onClick={() => openTrailer(currentMovie)}
+                aria-label={`Watch trailer for ${currentMovie.title}`}
+              >
+                <Play size={22} fill="currentColor" />
+              </button>
             </div>
 
-            <div className="theatres-section" id="theatres-scroll-target">
+            <div className="detail-page-body">
+              <div className="detail-page-grid">
+                <div className="detail-top-row">
+                  <div className="detail-poster">
+                    <img src={resolveMediaUrl(currentMovie.poster_path, "poster")} alt={currentMovie.title} />
+                  </div>
+                  <div className="detail-headline">
+                    {shows.length > 0 && (
+                      <span className="detail-status-badge">In Theatres</span>
+                    )}
+                    <h1 className="detail-title">{currentMovie.title}</h1>
+                    <p className="detail-subline">
+                      {[
+                        getReleaseYear(currentMovie.release_date),
+                        formatRuntime(currentMovie.runtime),
+                      ].filter(Boolean).join(" • ")}
+                    </p>
+                    {Number(currentMovie.vote_average) > 0 && (
+                      <div className="detail-rating-row">
+                        <span className="detail-rating-score">
+                          <Star size={15} fill="var(--coral)" color="var(--coral)" />
+                          {Number(currentMovie.vote_average).toFixed(1)}/10
+                        </span>
+                        <span className="detail-rating-label">TMDB</span>
+                        {typeof currentMovie.vote_count === "number" && currentMovie.vote_count > 0 && (
+                          <span className="detail-rating-votes">
+                            {formatCompactCount(currentMovie.vote_count)}+ Ratings
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <aside className="detail-sidebar-col">
+                  <VibeChart movie={currentMovie} loading={detailLoading} />
+
+                  <div className="detail-sidebar-meta">
+                    {getDirectors(movieCrew).length > 0 && (
+                      <div className="detail-sidebar-meta-row">
+                        <span className="detail-sidebar-meta-label">Director</span>
+                        <span className="detail-sidebar-meta-value">
+                          {getDirectors(movieCrew).map((member) => member.name).join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {getProductionCountries(currentMovie).length > 0 && (
+                      <div className="detail-sidebar-meta-row">
+                        <span className="detail-sidebar-meta-label">Country</span>
+                        <span className="detail-sidebar-meta-value">
+                          {getProductionCountries(currentMovie).join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {currentMovie.original_language && (
+                      <div className="detail-sidebar-meta-row">
+                        <span className="detail-sidebar-meta-label">Language</span>
+                        <span className="detail-sidebar-meta-value">
+                          {getLangLabel(currentMovie.original_language)}
+                        </span>
+                      </div>
+                    )}
+                    {(currentMovie.certification || currentMovie.adult === true) && (
+                      <div className="detail-sidebar-meta-row">
+                        <span className="detail-sidebar-meta-label">Age Rating</span>
+                        <span className="detail-sidebar-meta-value">
+                          {currentMovie.certification || (currentMovie.adult ? "18+" : "")}
+                        </span>
+                      </div>
+                    )}
+                    {formatReleaseDate(currentMovie.release_date) && (
+                      <div className="detail-sidebar-meta-row">
+                        <span className="detail-sidebar-meta-label">Release</span>
+                        <span className="detail-sidebar-meta-value">
+                          {formatReleaseDate(currentMovie.release_date)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="detail-sidebar-actions">
+                    <button type="button" className="btn-primary detail-sidebar-btn" onClick={scrollToShowtimes}>
+                      <Ticket size={16} /> Book Tickets
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-primary detail-sidebar-btn detail-wishlist-btn${isWishlisted(Number(currentMovie.id)) ? " is-active" : ""}`}
+                      onClick={() => toggleWishlist({
+                        id: Number(currentMovie.id),
+                        title: currentMovie.title,
+                        poster_path: currentMovie.poster_path,
+                        vote_average: currentMovie.vote_average,
+                        original_language: currentMovie.original_language,
+                        genre_ids: currentMovie.genre_ids,
+                        overview: currentMovie.overview,
+                      })}
+                    >
+                      <Bookmark size={16} fill={isWishlisted(Number(currentMovie.id)) ? "currentColor" : "none"} />
+                      {isWishlisted(Number(currentMovie.id)) ? "Saved to Wishlist" : "Add to Wishlist"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline detail-sidebar-btn"
+                      onClick={() => openTrailer(currentMovie)}
+                    >
+                      <Play size={16} /> Watch Trailer
+                    </button>
+                  </div>
+                </aside>
+
+                <div className="detail-main-content">
+                  <section className="detail-block detail-overview-block">
+                    <h2 className="detail-block-title">Overview</h2>
+                    {detailLoading ? (
+                      <div className="detail-overview-skeleton shad-skeleton" aria-hidden="true" />
+                    ) : (
+                      <p className="detail-overview">
+                        {currentMovie.overview || "No description is available for this title yet."}
+                      </p>
+                    )}
+                    {extractTmdbGenres(currentMovie).length > 0 && (
+                      <div className="detail-genre-tags">
+                        {extractTmdbGenres(currentMovie).map((genre) => (
+                          <span key={genre.id} className="detail-genre-tag">{genre.name}</span>
+                        ))}
+                      </div>
+                    )}
+                    {detailExtrasError && (
+                      <p className="detail-inline-error">{detailExtrasError}</p>
+                    )}
+                  </section>
+
+                  <section className="detail-block detail-cast-block">
+                    <div className="detail-block-head">
+                      <h2 className="detail-block-title">Cast</h2>
+                      {movieCast.length > 5 && <ChevronRight size={18} className="detail-block-chevron" aria-hidden="true" />}
+                    </div>
+                    {detailLoading ? (
+                      <div className="detail-cast-row">
+                        {[1, 2, 3, 4, 5].map((item) => (
+                          <div key={item} className="detail-cast-card">
+                            <div className="detail-cast-photo shad-skeleton" />
+                            <div className="detail-cast-name shad-skeleton" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : movieCast.length > 0 ? (
+                      <div className="detail-cast-row">
+                        {movieCast.map((member) => {
+                          const profileUrl = resolveMediaUrl(member.profilePath, "profile");
+                          return (
+                            <article key={`${member.id}-${member.name}`} className="detail-cast-card">
+                              <div className="detail-cast-photo">
+                                {profileUrl ? (
+                                  <img src={profileUrl} alt={member.name} loading="lazy" />
+                                ) : (
+                                  <div className="detail-cast-placeholder" aria-hidden="true">
+                                    <User size={22} />
+                                  </div>
+                                )}
+                              </div>
+                              <p className="detail-cast-name">{member.name}</p>
+                              {member.character && <p className="detail-cast-role">{member.character}</p>}
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="detail-empty-msg">Cast information is not available for this title.</p>
+                    )}
+                  </section>
+
+                  <section className="detail-block detail-crew-block-section">
+                    <h2 className="detail-block-title">Crew</h2>
+                    {detailLoading ? (
+                      <div className="detail-cast-row">
+                        {[1, 2, 3].map((item) => (
+                          <div key={item} className="detail-cast-card">
+                            <div className="detail-cast-photo shad-skeleton" />
+                            <div className="detail-cast-name shad-skeleton" />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (() => {
+                      const featuredCrew = getCrewByJobs(movieCrew, ["Director", "Writer", "Screenplay", "Producer", "Executive Producer"]);
+                      return featuredCrew.length > 0 ? (
+                        <div className="detail-cast-row">
+                          {featuredCrew.map((member) => {
+                            const profileUrl = resolveMediaUrl(member.profilePath, "profile");
+                            return (
+                              <article key={`${member.id}-${member.job}`} className="detail-cast-card">
+                                <div className="detail-cast-photo">
+                                  {profileUrl ? (
+                                    <img src={profileUrl} alt={member.name} loading="lazy" />
+                                  ) : (
+                                    <div className="detail-cast-placeholder" aria-hidden="true">
+                                      <User size={22} />
+                                    </div>
+                                  )}
+                                </div>
+                                <p className="detail-cast-name">{member.name}</p>
+                                {member.job && <p className="detail-cast-role">{member.job}</p>}
+                              </article>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="detail-empty-msg">Crew information is not available for this title.</p>
+                      );
+                    })()}
+                  </section>
+
+                  <div className="theatres-section" id="theatres-scroll-target">
+              <div className="cx-date-row">
+                <div className="cx-date-label">CITY</div>
+                <div className="cx-date-pills">
+                  <span className="cx-date-pill active">{currentCity}</span>
+                </div>
+              </div>
+
+              {detailLanguages.length > 0 && (
+                <div className="cx-date-row">
+                  <div className="cx-date-label">SCREENING LANGUAGE</div>
+                  <div className="cx-date-pills">
+                    <button
+                      className={`cx-date-pill ${detailScreeningLang === "all" ? "active" : ""}`}
+                      onClick={() => setDetailScreeningLang("all")}
+                    >
+                      All
+                    </button>
+                    {detailLanguages.map((lang) => (
+                      <button
+                        key={lang}
+                        className={`cx-date-pill ${detailScreeningLang === lang ? "active" : ""}`}
+                        onClick={() => setDetailScreeningLang(lang)}
+                      >
+                        {lang}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {showDates.length > 0 && (
                 <div className="cx-date-row">
                   <div className="cx-date-label">SELECT DATE</div>
@@ -1060,7 +2189,7 @@ export default function App() {
                         className={`cx-date-pill ${selectedDetailDate === date ? "active" : ""}`}
                         onClick={() => { setSelectedDetailDate(date); setSelectedShow(null); }}
                       >
-                        {formatShowDate(date)}
+                        {formatShowDateLabel(date)}
                       </button>
                     ))}
                   </div>
@@ -1068,54 +2197,87 @@ export default function App() {
               )}
 
               {showsLoading && <p style={{ color: "var(--text2)" }}>Loading showtimes...</p>}
-              {!showsLoading && showsError && <p style={{ color: "var(--text2)" }}>{showsError}</p>}
+              {!showsLoading && showsError && (
+                <div style={{ color: "var(--text2)" }}>
+                  <p>{showsError}</p>
+                  <p style={{ marginTop: "0.35rem", fontSize: "0.9rem", opacity: 0.85 }}>Currently showing in India</p>
+                </div>
+              )}
               {!showsLoading && !showsError && filteredShowsForDate.length === 0 && (
                 <p style={{ color: "var(--text2)" }}>No shows available for this date.</p>
               )}
 
-              {filteredShowsForDate.map(show => {
-                const screen = screens.find(item => item.id === show.screenId);
-                const theatre = screen ? theatres.find(item => item.id === screen.theatreId) : undefined;
-                const isSelected = selectedShow?.id === show.id;
-                const soldOut = show.availableSeats <= 0;
-                return (
-                  <div key={show.id} className="theatre-card">
-                    <div className="theatre-info">
-                      <h3>{theatre?.name || "CineX Theatre"}</h3>
-                      <p>{theatre?.city || currentCity} • {screen?.screenName || `Screen ${show.screenId}`}</p>
-                      <p>{show.availableSeats} seats available</p>
-                    </div>
-                    <div className="showtimes-list">
-                      <button
-                        className={`showtime-pill ${isSelected ? "active" : ""} ${soldOut ? "sold-out" : ""}`}
-                        disabled={soldOut}
-                        onClick={() => {
-                          if (soldOut) return;
-                          const scr = screens.find(item => item.id === show.screenId);
-                          const th = scr ? theatres.find(item => item.id === scr.theatreId) : undefined;
-                          setSelectedShow(show);
-                          setCurrentTheatre(th?.name || "CineX Theatre");
-                          setCurrentTime(show.showTime);
-                        }}
-                      >
-                        <span className="showtime-time">{show.showTime}</span>
-                        <span className="showtime-type">{show.showDate} • ₹{show.price}</span>
-                      </button>
-                    </div>
+              {groupedTheatreShows.map((group) => (
+                <div key={group.theatreId} className="theatre-card">
+                  <div className="theatre-info">
+                    <h3>{group.theatreName}</h3>
+                    <p>{group.city} • {group.screenName}</p>
                   </div>
-                );
-              })}
+                  {group.languageGroups.map((langGroup) => (
+                    <div key={langGroup.language} className="theatre-language-group">
+                      <div className="theatre-language-label">{langGroup.language}</div>
+                      <div className="showtimes-list">
+                        {langGroup.shows.map((show) => {
+                          const isSelected = selectedShow?.id === show.id;
+                          const soldOut = show.availableSeats <= 0;
+                          return (
+                            <button
+                              key={show.id}
+                              className={`showtime-pill ${isSelected ? "active" : ""} ${soldOut ? "sold-out" : ""}`}
+                              disabled={soldOut}
+                              onClick={() => {
+                                if (soldOut) return;
+                                setSelectedShow(show);
+                                setCurrentShowId(show.id);
+                                setCurrentTheatre(show.theatreName || group.theatreName);
+                                setCurrentTime(formatShowTime(show.showTime));
+                              }}
+                            >
+                              <span className="showtime-time">{formatShowTime(show.showTime)}</span>
+                              <span className="showtime-type">₹{show.price}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+                  </div>
+
+                  <section className="detail-block detail-similar-block">
+                    <h2 className="detail-block-title">You May Also Like</h2>
+                    {detailLoading ? (
+                      <div className="cx-movie-row">
+                        {[1, 2, 3, 4, 5].map((item) => (
+                          <div key={item} className="cx-movie-card">
+                            <div className="shad-skeleton cx-poster-wrap" style={{ aspectRatio: "2/3" }} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : similarMovies.length > 0 ? (
+                      <div className="cx-movie-row">
+                        {similarMovies.map((movie) => (
+                          <MovieCard
+                            key={movie.id}
+                            movie={movie}
+                            onClick={() => handleMovieClick(movie)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="detail-empty-msg">No similar movies are available right now.</p>
+                    )}
+                  </section>
+                </div>
+              </div>
             </div>
 
             {selectedShow && (
               <div className="cx-show-bar">
                 <div className="cx-show-bar-info">
-                  {(() => {
-                    const scr = screens.find(item => item.id === selectedShow.screenId);
-                    const th = scr ? theatres.find(item => item.id === scr.theatreId) : undefined;
-                    return th?.name || "CineX Theatre";
-                  })()}
-                  <strong>{selectedShow.showTime} • {selectedShow.showDate}</strong>
+                  {selectedShow.theatreName || currentTheatre || "CineX Theatre"}
+                  <strong>{formatShowTime(selectedShow.showTime)} • {selectedShow.showDate} • {selectedShow.screeningLanguage || ""}</strong>
                 </div>
                 <button className="btn-primary" onClick={() => openSeats(selectedShow)}>Select Seats</button>
               </div>
@@ -1129,13 +2291,16 @@ export default function App() {
         <div className="seat-header">
           <button className="btn-close-modal" onClick={closeSeats}><ArrowLeft size={18} /></button>
           <div style={{ textAlign: "center", flex: 1 }}>
-            <div className="cx-logo" style={{ fontSize: "1.1rem", marginBottom: ".25rem" }}>CINEX</div>
+            <CinexLogo height={24} className="cx-logo" style={{ marginBottom: ".25rem" }} onClick={() => { closeSeats(); closeDetail(); setIsPaymentOpen(false); setIsHistoryOpen(false); navigate("/"); }} />
             <div className="seat-header-info">
               <h2>{currentMovie?.title}</h2>
-              <p>Today, {currentTime} • {screens.find(s => s.id === selectedShow?.screenId)?.screenName || "IMAX Screen 1"}</p>
+              <p>Today, {currentTime} • {selectedShow?.screenName || "Screen 1"}</p>
             </div>
           </div>
-          <button className="btn-close-modal" onClick={closeSeats}>✕</button>
+          <div className="seat-header-auth">
+            <AuthControls compact />
+            <button className="btn-close-modal" onClick={closeSeats}>✕</button>
+          </div>
         </div>
 
         <div className="seat-scroll-container">
@@ -1147,145 +2312,27 @@ export default function App() {
           <div className="seat-legend">
             <span className="legend-item"><div className="legend-box avail" /> Available</span>
             <span className="legend-item"><div className="legend-box sel" /> Selected</span>
-            <span className="legend-item"><div className="legend-box prem" /> Premium Recliner</span>
-            <span className="legend-item"><div className="legend-box held" style={{ background: "rgba(245, 158, 11, 0.3)", border: "1px dashed #f59e0b" }} /> Held (Live)</span>
-            <span className="legend-item"><div className="legend-box booked" /> Booked / Sold</span>
+            <span className="legend-item"><div className="legend-box royale" /> Royale / Premium</span>
+            <span className="legend-item"><div className="legend-box club" /> Club</span>
+            <span className="legend-item"><div className="legend-box held" /> Held (Live)</span>
+            <span className="legend-item"><div className="legend-box booked" /> Booked</span>
           </div>
 
-          {seatsLoading && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>Loading real seats...</p>}
-          {!seatsLoading && showSeats.length === 0 && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>No seats are configured for this show.</p>}
-          {!seatsLoading && showSeats.length > 0 && (
-            <div className="seating-chart">
-              {Object.entries(seatsByRow).map(([row, seats]) => (
-                <div key={row} className="seat-row">
-                  <div className="row-label">{row}</div>
-                  {seats.map(seat => {
-                    const isBooked = seat.status === "BOOKED";
-                    const isHeld = liveSeatStatus[String(seat.seatId)]?.status === "HELD";
-                    const isSelected = selectedSeats.some(item => item.seatId === seat.seatId);
-                    return (
-                      <button
-                        key={seat.seatId}
-                        className={`seat-btn ${seat.seatType?.toLowerCase() || ""} ${isBooked ? "booked" : isHeld ? "held" : isSelected ? "selected" : ""}`}
-                        disabled={isBooked || (isHeld && liveSeatStatus[String(seat.seatId)]?.userId !== (user ? user.id : "guest_user"))}
-                        title={`${seat.seatNumber} • ${seat.seatType} • ₹${seat.price}`}
-                        onClick={() => toggleSeat(seat.seatNumber, seat.price, seat.seatId)}
-                      >{seat.seatNumber}</button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
+          {selectedShow?.screenName && (
+            <p className="cx-seat-screen-name">{selectedShow.theatreName} • {selectedShow.screenName}</p>
           )}
 
-          <div className="seating-chart" style={{ display: "none" }}>
-            {/* Executive Tier */}
-            <div className="seat-tier-section">
-              <div className="tier-label">👑 EXECUTIVE RECLINERS – ₹350</div>
-              {["A", "B"].map(r => (
-                <div key={r} className="seat-row">
-                  <div className="row-label">{r}</div>
-                  {/* Left block (1-4) */}
-                  {[1, 2, 3, 4].map(i => {
-                    const id = `${r}${i}`;
-                    const hardcodedBooked = (r === "A" && i === 2) || (r === "B" && i === 3);
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn premium ${getSeatStatusClass(id, hardcodedBooked)}`}
-                        disabled={isSeatDisabled(id, hardcodedBooked)}
-                        onClick={() => toggleSeat(id, 350)}
-                      >{i}</button>
-                    );
-                  })}
-                  <div className="aisle-gap" />
-                  {/* Middle block (5-10) */}
-                  {[5, 6, 7, 8, 9, 10].map(i => {
-                    const id = `${r}${i}`;
-                    const hardcodedBooked = (r === "A" && (i === 6 || i === 7));
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn premium ${getSeatStatusClass(id, hardcodedBooked)}`}
-                        disabled={isSeatDisabled(id, hardcodedBooked)}
-                        onClick={() => toggleSeat(id, 350)}
-                      >{i}</button>
-                    );
-                  })}
-                  <div className="aisle-gap" />
-                  {/* Right block (11-14) */}
-                  {[11, 12, 13, 14].map(i => {
-                    const id = `${r}${i}`;
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn premium ${getSeatStatusClass(id, false)}`}
-                        disabled={isSeatDisabled(id, false)}
-                        onClick={() => toggleSeat(id, 350)}
-                      >{i}</button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-
-            {/* Club Tier */}
-            <div className="seat-tier-section">
-              <div className="tier-label">⭐ CLUB CLASS – ₹220</div>
-              {["C", "D", "E", "F", "G"].map(r => (
-                <div key={r} className="seat-row">
-                  <div className="row-label">{r}</div>
-                  {/* Left block (1-4) */}
-                  {[1, 2, 3, 4].map(i => {
-                    const id = `${r}${i}`;
-                    const hardcodedBooked = (r === "C" && i === 1) || (r === "E" && i === 4) || (r === "F" && i === 2);
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn ${getSeatStatusClass(id, hardcodedBooked)}`}
-                        disabled={isSeatDisabled(id, hardcodedBooked)}
-                        onClick={() => toggleSeat(id, 220)}
-                      >{i}</button>
-                    );
-                  })}
-                  <div className="aisle-gap" />
-                  {/* Middle block (5-10) */}
-                  {[5, 6, 7, 8, 9, 10].map(i => {
-                    const id = `${r}${i}`;
-                    const hardcodedBooked = (r === "D" && (i === 5 || i === 8)) || (r === "G" && i === 7);
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn ${getSeatStatusClass(id, hardcodedBooked)}`}
-                        disabled={isSeatDisabled(id, hardcodedBooked)}
-                        onClick={() => toggleSeat(id, 220)}
-                      >{i}</button>
-                    );
-                  })}
-                  <div className="aisle-gap" />
-                  {/* Right block (11-14) */}
-                  {[11, 12, 13, 14].map(i => {
-                    const id = `${r}${i}`;
-                    const hardcodedBooked = (r === "E" && i === 12) || (r === "F" && (i === 13 || i === 14));
-                    return (
-                      <button
-                        key={id}
-                        className={`seat-btn ${getSeatStatusClass(id, hardcodedBooked)}`}
-                        disabled={isSeatDisabled(id, hardcodedBooked)}
-                        onClick={() => toggleSeat(id, 220)}
-                      >{i}</button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-
-            {/* Screen Visualization */}
-            <div className="screen-wrapper">
-              <div className="screen-arc" />
-              <p>IMAX DUAL LASER SCREEN • ALL EYES THIS WAY</p>
-            </div>
-          </div>
+          {seatsLoading && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>Loading seats...</p>}
+          {!seatsLoading && showSeats.length === 0 && <p style={{ textAlign: "center", color: "var(--text-muted)" }}>No seats are configured for this show.</p>}
+          {!seatsLoading && showSeats.length > 0 && (
+            <SeatMap
+              seats={showSeats}
+              selectedSeatIds={selectedSeatIds}
+              liveSeatStatus={liveSeatStatus}
+              currentUserId={user?.id}
+              onToggleSeat={toggleSeat}
+            />
+          )}
         </div>
 
         <div className="seat-footer">
@@ -1324,21 +2371,25 @@ export default function App() {
               <p className="cx-success-sub">Your tickets have been secured.</p>
               <div className="cx-ticket-card">
                 <div className="cx-ticket-top">
-                  <span className="cx-logo" style={{ fontSize: "1rem" }}>CINEX</span>
+                  <CinexLogo height={20} className="cx-logo" />
                   <span className="cx-ticket-vip">VIP SCREENING</span>
                 </div>
                 <div className="cx-ticket-movie">
-                  <img src={lastBooking.posterPath?.startsWith("http") ? lastBooking.posterPath : `${IMG_BASE_URL}${lastBooking.posterPath}`} alt="" style={{ width: 60, borderRadius: 8 }} />
+                  <img src={resolveMediaUrl(lastBooking.posterPath, "poster")} alt="" style={{ width: 60, borderRadius: 8 }} />
                   <div>
                     <div style={{ fontWeight: 800, fontSize: "1.1rem", textTransform: "uppercase" }}>{lastBooking.movieTitle}</div>
-                    <div style={{ fontSize: ".75rem", color: "var(--text2)", marginTop: ".25rem" }}>IMAX 70MM • SCI-FI</div>
-                    <div style={{ color: "var(--gold)", fontSize: ".85rem", marginTop: ".35rem" }}>★ 9.4 / 10</div>
+                    <div style={{ fontSize: ".75rem", color: "var(--text2)", marginTop: ".25rem" }}>
+                      {[lastBooking.screeningLanguage, lastBooking.screenName].filter(Boolean).join(" • ") || "CineX Screening"}
+                    </div>
+                    {currentMovie?.vote_average ? (
+                      <div style={{ color: "var(--gold)", fontSize: ".85rem", marginTop: ".35rem" }}>★ {Number(currentMovie.vote_average).toFixed(1)} / 10</div>
+                    ) : null}
                   </div>
                 </div>
-                <img className="cx-ticket-qr" src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(`CNX-${lastBooking.bookingId}`)}`} alt="QR" />
+                <img className="cx-ticket-qr" src={lastBooking.ticketQrUrl || (lastBooking.ticketToken ? `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(lastBooking.ticketToken)}` : "")} alt="QR" />
                 <div className="cx-ticket-grid">
                   <div><span>THEATRE</span>{lastBooking.theatreName}</div>
-                  <div><span>SCREEN</span>IMAX 1</div>
+                  <div><span>SCREEN</span>{lastBooking.screenName || "Screen"}</div>
                   <div><span>DATE</span>{lastBooking.showDate}</div>
                   <div><span>TIME</span>{lastBooking.showTime}</div>
                   <div style={{ gridColumn: "1 / -1" }}><span>SEATS</span><span className="cx-ticket-seats">{lastBooking.seats.join(", ")}</span></div>
@@ -1349,7 +2400,20 @@ export default function App() {
                 </div>
               </div>
               <div className="cx-success-actions">
-                <button className="cx-pay-btn" onClick={() => toast.info("Download", { description: "Check your Ticket Vault for PDF download." })}>
+                <button className="cx-pay-btn" onClick={async () => {
+                  if (!lastBooking.ticketToken && !lastBooking.bookingId) {
+                    toast.error("Ticket is not ready to download yet.");
+                    return;
+                  }
+                  try {
+                    const path = lastBooking.ticketToken
+                      ? `/api/tickets/download/${lastBooking.ticketToken}`
+                      : `/api/tickets/download-by-booking/${lastBooking.bookingId}`;
+                    await downloadAuthenticatedFile(path, `CineX-Ticket-CNX-${lastBooking.bookingId}.pdf`);
+                  } catch (err) {
+                    toast.error("Download failed", { description: getApiErrorMessage(err, "Unable to download ticket PDF.") });
+                  }
+                }}>
                   <Download size={18} /> Download Ticket
                 </button>
                 <div style={{ display: "flex", gap: ".75rem" }}>
@@ -1366,7 +2430,7 @@ export default function App() {
             </div>
           ) : (
             <>
-              <div className="cx-checkout-logo">CINEX</div>
+              <CinexLogo height={30} className="cx-checkout-logo" style={{ marginBottom: "0.75rem" }} onClick={() => { setIsPaymentOpen(false); closeSeats(); closeDetail(); setIsHistoryOpen(false); navigate("/"); }} />
               <button className="cx-checkout-back" onClick={() => setIsPaymentOpen(false)}>
                 <ArrowLeft size={16} /> Back to Seat Selection
               </button>
@@ -1376,16 +2440,16 @@ export default function App() {
                   <h3>Order Summary</h3>
                   <div className="cx-order-movie">
                     <div className="cx-order-poster">
-                      <img src={currentMovie?.poster_path?.startsWith("http") ? currentMovie.poster_path : `${IMG_BASE_URL}${currentMovie?.poster_path}`} alt="" />
+                      <img src={resolveMediaUrl(currentMovie?.poster_path, "poster")} alt="" />
                     </div>
                     <div>
                       <div className="cx-order-title">{currentMovie?.title}</div>
                       <div className="cx-order-tags">
-                        <span className="cx-tag">IMAX 2D</span>
-                        <span className="cx-tag">R</span>
+                        {selectedShow?.screeningLanguage && <span className="cx-tag">{selectedShow.screeningLanguage}</span>}
+                        {selectedShow?.screenName && <span className="cx-tag">{selectedShow.screenName}</span>}
                       </div>
                       <div className="cx-order-meta">
-                        <span><MapPin size={12} style={{ display: "inline", marginRight: 4 }} />{currentTheatre}</span>
+                        <span><MapPin size={12} style={{ display: "inline", marginRight: 4 }} />{selectedShow?.theatreName || currentTheatre}</span>
                         <span><Calendar size={12} style={{ display: "inline", marginRight: 4 }} />{selectedShow?.showDate} • {currentTime}</span>
                       </div>
                     </div>
@@ -1419,12 +2483,25 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="cx-payment-methods">
+                <h3>Choose Payment Method</h3>
+                <button type="button" className={`cx-payment-method ${paymentMethod === "RAZORPAY" ? "active" : ""}`} onClick={() => setPaymentMethod("RAZORPAY")}>
+                  <span>Razorpay</span><small>Cards, UPI, net banking</small>
+                </button>
+                <button type="button" className={`cx-payment-method ${paymentMethod === "WALLET" ? "active" : ""}`} onClick={() => setPaymentMethod("WALLET")}>
+                  <span>CineX Wallet</span><small>{walletBalance == null ? "Loading balance..." : `Available balance: ₹${walletBalance.toFixed(2)}`}</small>
+                </button>
+                {paymentMethod === "WALLET" && walletBalance != null && walletBalance < totalPrice && (
+                  <div className="cx-error-banner">Insufficient wallet balance. Choose Razorpay to continue.</div>
+                )}
+              </div>
+
               {paymentError && (
                 <div className="cx-error-banner" style={{ marginBottom: "1rem" }}>{paymentError}</div>
               )}
 
-              <button className="cx-pay-btn" disabled={processing} onClick={processPayment}>
-                <Lock size={16} /> {processing ? "Processing..." : "Complete Payment"}
+              <button className="cx-pay-btn" disabled={processing || (paymentMethod === "WALLET" && walletBalance != null && walletBalance < totalPrice)} onClick={processPayment}>
+                <Lock size={16} /> {processing ? "Processing..." : paymentMethod === "WALLET" ? `Pay ₹${totalPrice} with Wallet` : "Complete Payment"}
               </button>
               <p className="cx-secure-note"><Shield size={12} style={{ display: "inline", marginRight: 4 }} />Secure SSL Checkout</p>
             </>
@@ -1454,14 +2531,14 @@ export default function App() {
               userBookings.map((b, i) => {
                 const posterImg = b.posterPath ? (b.posterPath.startsWith('http') ? b.posterPath : `https://image.tmdb.org/t/p/w300${b.posterPath}`) : b.poster;
                 const movieName = b.movieTitle || b.movie || "Cinema Feature";
-                const theatreName = b.theatreName || b.theatre || "CineX IMAX";
-                const statusStr = b.bookingStatus || b.status || "CONFIRMED";
-                const showTimeStr = b.showTime || b.time || "18:00";
-                const showDateStr = b.showDate || b.date || "Today";
-                const seatsList = b.seatNumbers || b.seats || ["A1"];
+                const theatreName = b.theatreName || b.theatre || "CineX Theatre";
+                const statusStr = b.bookingStatus || b.status || "PENDING";
+                const showTimeStr = b.showTime || b.time || "";
+                const showDateStr = b.showDate || b.date || "";
+                const seatsList = b.seatNumbers || b.seats || [];
                 const amountVal = b.totalAmount || b.total || 0;
-                const bookingIdVal = b.bookingId || (b.id ? String(b.id).replace('CNX-', '') : 8000 + i);
-                const tokenVal = b.ticketToken || (b.bookingId ? `TOKEN-CNX-${b.bookingId}` : null);
+                const bookingIdVal = b.bookingId || (b.id ? String(b.id).replace('CNX-', '') : i);
+                const tokenVal = b.ticketToken || null;
 
                 return (
                 <div key={bookingIdVal || i} className="ticket-card">

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { toast } from "sonner";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { showWishlistAddedToast, showWishlistRemovedToast } from "./cinexToast";
 
 export interface WishlistMovie {
   id: number;
@@ -18,6 +18,11 @@ export const useWishlist = (userId?: string) => {
   const storageKey = `${WISHLIST_KEY_PREFIX}${effectiveUserId}`;
 
   const [wishlist, setWishlist] = useState<WishlistMovie[]>([]);
+  const wishlistRef = useRef<WishlistMovie[]>([]);
+
+  useEffect(() => {
+    wishlistRef.current = wishlist;
+  }, [wishlist]);
 
   // Load from localStorage on mount or user change
   useEffect(() => {
@@ -49,44 +54,44 @@ export const useWishlist = (userId?: string) => {
   }, [wishlist]);
 
   const toggleWishlist = useCallback((movie: WishlistMovie) => {
-    setWishlist((current) => {
-      const exists = current.some((m) => m.id === movie.id);
-      let updated: WishlistMovie[];
-      if (exists) {
-        updated = current.filter((m) => m.id !== movie.id);
-        toast.info("Removed from Wishlist", {
-          description: `${movie.title} has been removed from your saved movies.`
-        });
-      } else {
-        updated = [movie, ...current];
-        toast.success("❤️ Added to Wishlist!", {
-          description: `${movie.title} is now saved in your Wishlist for quick access.`
-        });
-      }
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(updated));
-      } catch (e) {
-        console.error("Failed to save wishlist:", e);
-      }
-      return updated;
-    });
+    const current = wishlistRef.current;
+    const exists = current.some((m) => m.id === movie.id);
+    const updated = exists
+      ? current.filter((m) => m.id !== movie.id)
+      : [movie, ...current];
+
+    wishlistRef.current = updated;
+    setWishlist(updated);
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to save wishlist:", e);
+    }
+
+    if (exists) {
+      showWishlistRemovedToast(movie.title);
+    } else {
+      showWishlistAddedToast(movie.title);
+    }
   }, [storageKey]);
 
   const removeWishlist = useCallback((movieId: number, movieTitle?: string) => {
-    setWishlist((current) => {
-      const updated = current.filter((m) => m.id !== movieId);
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(updated));
-      } catch (e) {
-        console.error("Failed to save wishlist:", e);
-      }
-      if (movieTitle) {
-        toast.info("Removed from Wishlist", {
-          description: `${movieTitle} was removed.`
-        });
-      }
-      return updated;
-    });
+    const current = wishlistRef.current;
+    const updated = current.filter((m) => m.id !== movieId);
+
+    wishlistRef.current = updated;
+    setWishlist(updated);
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to save wishlist:", e);
+    }
+
+    if (movieTitle) {
+      showWishlistRemovedToast(movieTitle);
+    }
   }, [storageKey]);
 
   return {

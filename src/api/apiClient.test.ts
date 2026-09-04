@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import axios from "axios";
-import { api, configureApiAuth } from "./apiClient";
+import { api, clearApiAuth, configureApiAuth } from "./apiClient";
 
 describe("apiClient", () => {
   beforeEach(() => {
@@ -59,6 +59,69 @@ describe("apiClient", () => {
 
     const config = adapter.mock.calls[0][0];
     expect(config.headers.Authorization).toBeUndefined();
+  });
+
+  it("clears the token getter on logout or provider teardown", async () => {
+    clearApiAuth();
+    const adapter = vi.fn(async (config) => ({
+      data: [], status: 200, statusText: "OK", headers: {}, config,
+    }));
+    api.defaults.adapter = adapter;
+
+    await api.get("/api/bookings");
+
+    expect(adapter.mock.calls[0][0].headers.Authorization).toBeUndefined();
+  });
+
+  it("does not trigger onUnauthorized for skipAuth requests that return 401", async () => {
+    const onUnauthorized = vi.fn();
+    configureApiAuth({
+      getToken: async () => "test-clerk-jwt",
+      onUnauthorized,
+    });
+
+    const adapter = vi.fn(async (config) => {
+      const error = {
+        isAxiosError: true,
+        config,
+        response: {
+          status: 401,
+          data: { message: "Authentication required", status: 401 },
+        },
+      };
+      return Promise.reject(error);
+    });
+    api.defaults.adapter = adapter;
+
+    await expect(api.get("/api/cities/search", { skipAuth: true, params: { query: "chennai" } }))
+      .rejects.toBeTruthy();
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it("triggers onUnauthorized for protected requests that return 401", async () => {
+    const onUnauthorized = vi.fn();
+    configureApiAuth({
+      getToken: async () => "test-clerk-jwt",
+      onUnauthorized,
+    });
+
+    const adapter = vi.fn(async (config) => {
+      const error = {
+        isAxiosError: true,
+        config,
+        response: {
+          status: 401,
+          data: { message: "Authentication required", status: 401 },
+        },
+      };
+      return Promise.reject(error);
+    });
+    api.defaults.adapter = adapter;
+
+    await expect(api.get("/api/bookings/1")).rejects.toBeTruthy();
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces backend ErrorResponse message from axios errors", async () => {
