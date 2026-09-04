@@ -31,7 +31,7 @@ export const resolveCinexMediaDeliveryUrl = (path: string | null | undefined): s
   if (!objectKey) return "";
   const encodedKey = objectKey
     .split("/")
-    .map((segment) => encodeURIComponent(segment))
+    .map((segment) => encodeURIComponent(segment).replace(/%28/g, "(").replace(/%29/g, ")"))
     .join("/");
   return `${getCloudfrontMediaBaseUrl()}/${encodedKey}`;
 };

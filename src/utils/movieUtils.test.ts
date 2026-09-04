@@ -248,7 +248,7 @@ describe("CineX media delivery resolution", () => {
   const spiderManTrailerPlaybackUrl =
     `https://d1al8zqo1izqiu.cloudfront.net/${spiderManTrailerObjectKey
       .split("/")
-      .map((segment) => encodeURIComponent(segment))
+      .map((segment) => encodeURIComponent(segment).replace(/%28/g, "(").replace(/%29/g, ")"))
       .join("/")}`;
 
   beforeEach(() => {
