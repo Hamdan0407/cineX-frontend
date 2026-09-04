@@ -261,7 +261,7 @@ main{display:block;position:relative;z-index:0}
 .cx-show-bar-info strong{display:block;color:var(--text);font-size:1rem;margin-top:.15rem}
 
 /* ===== SEAT SELECTION ===== */
-.seat-selection-view{display:none;position:fixed;inset:0;z-index:170;background:var(--bg);flex-direction:column}
+.seat-selection-view{display:none;position:fixed;top:var(--cx-header-height);right:0;bottom:0;left:0;z-index:170;background:var(--bg);flex-direction:column}
 .seat-selection-view.active{display:flex}
 .seat-header{display:flex;justify-content:space-between;align-items:center;padding:1rem 1.5rem;border-bottom:1px solid var(--border)}
 .seat-header-info h2{font-size:1.1rem;font-weight:800;text-transform:uppercase}
