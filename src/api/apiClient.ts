@@ -28,6 +28,7 @@ export function getApiBaseUrl(
 }
 
 const API_BASE = getApiBaseUrl();
+const API_REQUEST_TIMEOUT_MS = 30_000;
 
 type TokenGetter = () => Promise<string | null>;
 
@@ -53,6 +54,8 @@ export function clearApiAuth() {
 
 export const api = axios.create({
   baseURL: API_BASE,
+  // Surface the existing error UI instead of loading indefinitely when the API is unavailable.
+  timeout: API_REQUEST_TIMEOUT_MS,
 });
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {

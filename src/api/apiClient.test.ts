@@ -18,6 +18,10 @@ describe("apiClient", () => {
     expect(adapter.mock.calls[0][0].headers.Authorization).toBe("Bearer test-clerk-jwt");
   });
 
+  it("uses a bounded timeout so unavailable APIs cannot leave the UI loading forever", () => {
+    expect(api.defaults.timeout).toBe(30_000);
+  });
+
   it("skips Authorization header when skipAuth is true", async () => {
     const adapter = vi.fn(async (config) => ({ data: [], status: 200, statusText: "OK", headers: {}, config }));
     api.defaults.adapter = adapter;
