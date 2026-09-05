@@ -485,6 +485,45 @@ main{display:block;position:relative;z-index:0}
 
 /* ===== LEGACY ALIASES ===== */
 .top-bar,.secondary-nav{display:none}
+/* ===== PROFILE & WISHLIST RESPONSIVE LAYOUTS ===== */
+.cx-profile-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 2.5rem;
+  align-items: start;
+}
+.cx-upcoming-ticket-card {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 1.5rem;
+  align-items: center;
+}
+.cx-past-ticket-card {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  gap: 1.25rem;
+  align-items: center;
+  opacity: 0.85;
+}
+.cx-wishlist-page {
+  min-height: 85vh;
+  padding: 2.5rem 1.5rem 4rem;
+  color: #F5F7FA;
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+.cx-wishlist-hero {
+  background: linear-gradient(135deg, rgba(255, 61, 90, 0.15) 0%, rgba(11, 13, 18, 0.9) 100%);
+  border: 1px solid rgba(255, 61, 90, 0.3);
+  border-radius: 24px;
+  padding: 2.5rem;
+  margin-bottom: 2.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
 
 /* ===== RESPONSIVE ===== */
 @media(max-width:900px){
@@ -493,14 +532,20 @@ main{display:block;position:relative;z-index:0}
   .cx-checkout-grid{grid-template-columns:1fr}
   .cx-trending-grid{grid-template-columns:1fr}
   .cx-trend-card.featured{grid-row:span 1;min-height:200px}
+  .cx-profile-grid{grid-template-columns:1fr;gap:1.5rem}
   .detail-page-grid{grid-template-columns:1fr;grid-template-rows:auto auto auto;gap:1.25rem 0}
   .detail-top-row{grid-column:1;grid-row:1;margin-top:-3.5rem;margin-bottom:.5rem}
-  .detail-sidebar-col{grid-column:1;grid-row:2;position:static;max-width:320px;margin:0 auto;width:100%;padding-top:0}
-  .detail-main-content{grid-column:1;grid-row:3}
+  .detail-main-content{grid-column:1;grid-row:2}
+  .detail-sidebar-col{grid-column:1;grid-row:3;position:static;max-width:100%;width:100%;margin:0;padding-top:1rem}
   .detail-poster{width:120px}
   .detail-meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .detail-cast-card{flex-basis:96px}
   .detail-cast-photo{width:76px;height:76px}
+}
+@media(max-width:768px){
+  .cx-upcoming-ticket-card{grid-template-columns:1fr;gap:1rem}
+  .cx-upcoming-ticket-card .ticket-poster{width:100%!important;max-width:140px;margin:0 auto}
+  .cx-upcoming-ticket-card > div:last-child{border-left:none!important;border-top:1px dashed rgba(255,255,255,0.12);padding-left:0!important;padding-top:1rem;width:100%}
 }
 @media(max-width:640px){
   .cx-header-inner{padding:.75rem 1rem;gap:.75rem}
@@ -515,4 +560,17 @@ main{display:block;position:relative;z-index:0}
   .cx-movie-card{flex-basis:156px}
   .cx-carousel-btn{display:none}
   .city-modal-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cx-past-ticket-card{grid-template-columns:1fr;gap:.75rem}
+  .cx-wishlist-page{padding:1.5rem .75rem 4rem}
+  .cx-wishlist-hero{padding:1.25rem;border-radius:16px}
+  .cx-show-bar{bottom:56px;padding:.85rem 1rem}
+  .cx-location span{max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 }
+@media(max-width:480px){
+  .detail-top-row{gap:.85rem}
+  .detail-poster{width:100px}
+  .detail-title{font-size:clamp(1.25rem,5.5vw,1.85rem);word-break:break-word;overflow-wrap:break-word}
+  .detail-page-body{padding:0 .85rem 2rem}
+  .theatre-card{padding:1rem;gap:1rem}
+}
+

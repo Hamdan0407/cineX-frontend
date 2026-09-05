@@ -152,7 +152,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         </button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "2.5rem", alignItems: "start" }}>
+      <div className="cx-profile-grid">
         {/* Left Section: Bookings */}
         <section>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
@@ -217,7 +217,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   : `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(String(bookingIdVal))}&color=0B0D12&bgcolor=FFFFFF`;
 
                 return (
-                  <div key={bookingIdVal || i} className="ticket-card" style={{ display: "grid", gridTemplateColumns: "110px 1fr auto", gap: "1.5rem", alignItems: "center" }}>
+                  <div key={bookingIdVal || i} className="ticket-card cx-upcoming-ticket-card">
                     {/* Poster */}
                     <div className="ticket-poster" style={{ width: 110 }}>
                       {posterImg ? (
@@ -324,7 +324,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 const bookingIdVal = b.bookingId || (b.id ? String(b.id).replace("CNX-", "") : i + 1);
 
                 return (
-                  <div key={bookingIdVal || i} className="ticket-card" style={{ alignItems: "center", display: "grid", gridTemplateColumns: "60px 1fr auto", gap: "1.25rem", opacity: 0.85 }}>
+                  <div key={bookingIdVal || i} className="ticket-card cx-past-ticket-card">
                     <div className="ticket-poster" style={{ width: 60 }}>
                       {posterImg ? (
                         <img src={posterImg} alt="" style={{ width: "100%", aspectRatio: "2/3", borderRadius: 6, objectFit: "cover" }} />

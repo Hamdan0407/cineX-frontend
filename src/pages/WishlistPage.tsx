@@ -26,7 +26,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({
   const navigate = useNavigate();
 
   return (
-    <div style={{ minHeight: "85vh", padding: "3rem 4rem", color: "#F5F7FA" }}>
+    <div className="cx-wishlist-page">
       {/* Back Navigation */}
       <div style={{ marginBottom: "2rem" }}>
         <button
@@ -61,18 +61,7 @@ export const WishlistPage: React.FC<WishlistPageProps> = ({
       </div>
 
       {/* Hero Header */}
-      <div style={{
-        background: "linear-gradient(135deg, rgba(255, 61, 90, 0.15) 0%, rgba(11, 13, 18, 0.9) 100%)",
-        border: "1px solid rgba(255, 61, 90, 0.3)",
-        borderRadius: "24px",
-        padding: "3rem",
-        marginBottom: "3rem",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        flexWrap: "wrap",
-        gap: "1.5rem"
-      }}>
+      <div className="cx-wishlist-hero">
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.8rem" }}>
             <span style={{

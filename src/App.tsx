@@ -215,6 +215,7 @@ export default function App() {
   const heldPollGenRef = useRef(0);
   const recentlyLockedAtRef = useRef<Map<number, number>>(new Map());
   const lockInFlightRef = useRef<Set<number>>(new Set());
+  const showtimeReqIdRef = useRef(0);
 
   // Checkout & Payment
   const [isPaymentOpen,  setIsPaymentOpen]  = useState(false);
@@ -288,32 +289,7 @@ export default function App() {
       .finally(() => setCityCatalogLoading(false));
   }, []);
 
-  const loadShowsForMovie = useCallback((movie: any, city: string) => {
-    const tmdbId = Number(movie?.tmdbId ?? movie?.id);
-    if (!tmdbId || !city) return Promise.resolve();
-    setShowsLoading(true);
-    setShowsError("");
-    setSelectedShow(null);
-    setCurrentShowId(null);
-    return fetchShowsForTmdbMovie(tmdbId, city)
-      .then((data) => {
-        setShows(data);
-        setDetailLanguages([...new Set(data.map((show) => show.screeningLanguage).filter(Boolean) as string[])]);
-        if (data.length === 0) {
-          setShowsError(`No CineX showtimes available in ${city}.`);
-          setSelectedDetailDate("");
-          return;
-        }
-        const dates = [...new Set(data.map((show) => show.showDate))].sort();
-        setSelectedDetailDate((prev) => (prev && dates.includes(prev) ? prev : dates[0]));
-      })
-      .catch((err) => {
-        console.error("Failed to load showtimes:", err);
-        setShowsError("Unable to load showtimes. Please try again.");
-        setShows([]);
-      })
-      .finally(() => setShowsLoading(false));
-  }, []);
+
 
   // ── Fetch Bookings from Spring Boot Backend ────────────────────────────────────
   const fetchUserBookings = useCallback(() => {
@@ -589,6 +565,57 @@ export default function App() {
     return () => clearInterval(timer);
   }, [carouselMovies.length]);
 
+  // ── Immediate Showtime Fetching Effect ─────────────────────────────────────────
+  // Triggers immediately as soon as tmdbId + currentCity exist for the open movie detail.
+  // Independent of cast/crew/similar/VibeChart/trailer, and immediately re-fetches when city changes.
+  useEffect(() => {
+    if (!isDetailOpen || !currentMovie) return;
+    const tmdbId = Number(currentMovie.tmdbId ?? currentMovie.id);
+    if (!tmdbId) return;
+
+    if (!currentCity) {
+      setShows([]);
+      setShowsError("Choose your city to see showtimes.");
+      setShowsLoading(false);
+      setSelectedShow(null);
+      setSelectedDetailDate("");
+      return;
+    }
+
+    const reqId = ++showtimeReqIdRef.current;
+    setShows([]);
+    setShowsError("");
+    setShowsLoading(true);
+    setSelectedShow(null);
+    setSelectedDetailDate("");
+
+    fetchShowsForTmdbMovie(tmdbId, currentCity)
+      .then((showData) => {
+        if (reqId !== showtimeReqIdRef.current) return;
+        setShows(showData);
+        setDetailLanguages([...new Set(showData.map((show) => show.screeningLanguage).filter(Boolean) as string[])]);
+        if (showData.length === 0) {
+          setShowsError(`No CineX showtimes available in ${currentCity}.`);
+          setSelectedDetailDate("");
+          return;
+        }
+        const dates = [...new Set(showData.map((show) => show.showDate))].sort();
+        setSelectedDetailDate((prev) => (prev && dates.includes(prev) ? prev : dates[0]));
+        fetchCityCinemaData(currentCity, homeScreeningLang);
+      })
+      .catch((err) => {
+        if (reqId !== showtimeReqIdRef.current) return;
+        console.error("Failed to load showtimes:", err);
+        setShowsError("Unable to load showtimes. Please try again.");
+        setShows([]);
+      })
+      .finally(() => {
+        if (reqId === showtimeReqIdRef.current) {
+          setShowsLoading(false);
+        }
+      });
+  }, [isDetailOpen, currentMovie?.tmdbId, currentMovie?.id, currentCity, fetchCityCinemaData, homeScreeningLang]);
+
   const handleMovieClick = (movie: any) => {
     if (!movie) return;
     const tmdbId = Number(movie.tmdbId ?? movie.id);
@@ -650,32 +677,6 @@ export default function App() {
         setDetailExtrasError("Some movie details could not be loaded.");
       })
       .finally(() => setDetailLoading(false));
-
-    if (!currentCity) {
-      setShowsError("Choose your city to see showtimes.");
-      return;
-    }
-
-    setShowsLoading(true);
-    fetchShowsForTmdbMovie(tmdbId, currentCity)
-      .then((showData) => {
-        setShows(showData);
-        setDetailLanguages([...new Set(showData.map((show) => show.screeningLanguage).filter(Boolean) as string[])]);
-        if (showData.length === 0) {
-          setShowsError(`No CineX showtimes available in ${currentCity}.`);
-          setSelectedDetailDate("");
-          return;
-        }
-        const dates = [...new Set(showData.map((show) => show.showDate))].sort();
-        setSelectedDetailDate(dates[0]);
-        fetchCityCinemaData(currentCity, homeScreeningLang);
-      })
-      .catch((err) => {
-        console.error("Failed to load showtimes:", err);
-        setShowsError("Unable to load showtimes. Please try again.");
-        setShows([]);
-      })
-      .finally(() => setShowsLoading(false));
 
     if (location.pathname !== "/" && location.pathname !== "/movies") {
       navigate("/");
@@ -1142,14 +1143,7 @@ export default function App() {
 
     if (changed) {
       clearCityDependentBookingState();
-      if (isDetailOpen && currentMovieRef.current) {
-        const movie = currentMovieRef.current;
-        const tmdbId = Number(movie.tmdbId ?? movie.id);
-        loadShowsForMovie(movie, city).then(() => fetchCityCinemaData(city, "all"));
-        if (tmdbId) {
-          fetchTmdbMovieDetails(tmdbId).catch(() => null);
-        }
-      } else if (isDetailOpen) {
+      if (!currentMovieRef.current && isDetailOpen) {
         setIsDetailOpen(false);
         setCurrentMovie(null);
       }
