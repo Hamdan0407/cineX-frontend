@@ -278,6 +278,10 @@ export default function App() {
         if (availabilityResult.status === "fulfilled") {
           tmdbIds = availabilityResult.value.data?.tmdbIds || [];
           languages = availabilityResult.value.data?.languages || [];
+          // Pre-fetch showtimes in the background so opening movie detail displays instantly
+          tmdbIds.forEach((id) => {
+            fetchShowsForTmdbMovie(Number(id), city).catch(() => {});
+          });
         }
         setCityBookableTmdbIds(new Set(tmdbIds.map((id) => Number(id))));
         setCityLanguages(languages);
@@ -608,11 +612,9 @@ export default function App() {
     }
 
     const reqId = ++showtimeReqIdRef.current;
-    setShows([]);
     setShowsError("");
     setShowsLoading(true);
     setSelectedShow(null);
-    setSelectedDetailDate("");
 
     fetchShowsForTmdbMovie(tmdbId, currentCity)
       .then((showData) => {
@@ -626,7 +628,6 @@ export default function App() {
         }
         const dates = [...new Set(showData.map((show) => show.showDate))].sort();
         setSelectedDetailDate((prev) => (prev && dates.includes(prev) ? prev : dates[0]));
-        fetchCityCinemaData(currentCity, homeScreeningLang);
       })
       .catch((err) => {
         if (reqId !== showtimeReqIdRef.current) return;
@@ -639,7 +640,7 @@ export default function App() {
           setShowsLoading(false);
         }
       });
-  }, [isDetailOpen, currentMovie?.tmdbId, currentMovie?.id, currentCity, fetchCityCinemaData, homeScreeningLang]);
+  }, [isDetailOpen, currentMovie?.tmdbId, currentMovie?.id, currentCity]);
 
   const handleMovieClick = (movie: any) => {
     if (!movie) return;
@@ -2206,7 +2207,16 @@ export default function App() {
                 </div>
               )}
 
-              {showsLoading && <p style={{ color: "var(--text2)" }}>Loading showtimes...</p>}
+              {showsLoading && (
+                <div className="cx-showtimes-skeleton" style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem", marginBottom: "1rem" }}>
+                  <div style={{ color: "var(--text2)", fontSize: "0.92rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ width: "14px", height: "14px", border: "2px solid var(--accent)", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "cx-spin 0.8s linear infinite" }}></span>
+                    Fetching showtimes...
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "12px", padding: "1.25rem", height: "80px", animation: "pulse 1.5s ease-in-out infinite" }}></div>
+                  <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: "12px", padding: "1.25rem", height: "80px", animation: "pulse 1.5s ease-in-out infinite" }}></div>
+                </div>
+              )}
               {!showsLoading && showsError && (
                 <div style={{ color: "var(--text2)" }}>
                   <p>{showsError}</p>

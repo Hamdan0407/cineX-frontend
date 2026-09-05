@@ -481,6 +481,7 @@ main{display:block;position:relative;z-index:0}
 .cx-error-banner{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:#fff;padding:1rem 1.5rem;border-radius:var(--radius-lg);margin:1rem 1.5rem;text-align:center;font-size:.9rem}
 .skeleton-card{animation:pulse 1.5s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes cx-spin{to{transform:rotate(360deg)}}
 .shad-skeleton{background:var(--surface2);border-radius:var(--radius)}
 
 /* ===== LEGACY ALIASES ===== */

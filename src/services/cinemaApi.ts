@@ -70,13 +70,53 @@ export async function fetchTmdbSimilarMovies(tmdbId: number): Promise<any[]> {
   return parseTmdbPayload(res.data);
 }
 
-export async function fetchShowsForTmdbMovie(tmdbId: number, city: string, language?: string): Promise<CineXShow[]> {
+const showtimesCache = new Map<string, { data: CineXShow[]; timestamp: number }>();
+const inFlightRequests = new Map<string, Promise<CineXShow[]>>();
+const SHOWTIMES_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes cache
+
+export function clearShowtimesCache(): void {
+  showtimesCache.clear();
+  inFlightRequests.clear();
+}
+
+export async function fetchShowsForTmdbMovie(
+  tmdbId: number,
+  city: string,
+  language?: string,
+  options?: { forceRefresh?: boolean }
+): Promise<CineXShow[]> {
+  const cacheKey = `${tmdbId}:${city}:${language || "all"}`;
+  const now = Date.now();
+  const cached = showtimesCache.get(cacheKey);
+
+  if (!options?.forceRefresh && cached && now - cached.timestamp < SHOWTIMES_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const existingRequest = inFlightRequests.get(cacheKey);
+  if (!options?.forceRefresh && existingRequest) {
+    return existingRequest;
+  }
+
   const langQuery = language && language !== "all" ? `&language=${encodeURIComponent(language)}` : "";
-  const res = await api.get<CineXShow[]>(
-    `/api/shows/tmdb/${tmdbId}?city=${encodeURIComponent(city)}${langQuery}`,
-    { skipAuth: true }
-  );
-  return res.data || [];
+  const requestPromise = api
+    .get<CineXShow[]>(
+      `/api/shows/tmdb/${tmdbId}?city=${encodeURIComponent(city)}${langQuery}`,
+      { skipAuth: true }
+    )
+    .then((res) => {
+      const data = res.data || [];
+      showtimesCache.set(cacheKey, { data, timestamp: Date.now() });
+      inFlightRequests.delete(cacheKey);
+      return data;
+    })
+    .catch((err) => {
+      inFlightRequests.delete(cacheKey);
+      throw err;
+    });
+
+  inFlightRequests.set(cacheKey, requestPromise);
+  return requestPromise;
 }
 
 export async function searchCities(query: string): Promise<CitySearchResultDto[]> {
