@@ -19,7 +19,7 @@ describe("apiClient", () => {
   });
 
   it("uses a bounded timeout so unavailable APIs cannot leave the UI loading forever", () => {
-    expect(api.defaults.timeout).toBe(30_000);
+    expect(api.defaults.timeout).toBe(60_000);
   });
 
   it("skips Authorization header when skipAuth is true", async () => {
@@ -75,8 +75,12 @@ describe("getApiBaseUrl", () => {
     expect(getApiBaseUrl("http://localhost:8081", "localhost")).toBe("http://localhost:8081");
   });
 
-  it("uses the same-origin proxy when localhost is baked into a deployed bundle", () => {
-    expect(getApiBaseUrl("http://localhost:8081", "cinextickets.in")).toBe("");
+  it("uses default prod API when localhost is baked into a deployed bundle", () => {
+    expect(getApiBaseUrl("http://localhost:8081", "cinextickets.in")).toBe("https://cinex-backend-rhjw.onrender.com");
+  });
+
+  it("uses default prod API when no API URL is configured in a production browser environment", () => {
+    expect(getApiBaseUrl("", "cinextickets.in")).toBe("https://cinex-backend-rhjw.onrender.com");
   });
 
   it("keeps an explicitly configured production API origin", () => {

@@ -6,29 +6,38 @@ declare module "axios" {
   }
 }
 
+export const DEFAULT_PROD_API_BASE = "https://cinex-backend-rhjw.onrender.com";
+
 /**
  * A localhost API URL is valid only during local development. If it is baked
- * into a deployed bundle, use the existing same-origin Nginx proxy instead.
+ * into a deployed bundle, or if no API URL is set in a production browser environment,
+ * use the production Render backend URL to prevent Vercel SPA html rewrites.
  */
 export function getApiBaseUrl(
   configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || "",
   hostname = typeof window === "undefined" ? "" : window.location.hostname,
 ): string {
-  const baseUrl = configuredBaseUrl.trim().replace(/\/$/, "");
-  if (!baseUrl || !hostname) return baseUrl;
+  const baseUrl = (configuredBaseUrl || "").trim().replace(/\/$/, "");
+  const isLocalBrowser = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || !hostname;
+
+  if (!baseUrl) {
+    return isLocalBrowser ? "http://localhost:8081" : DEFAULT_PROD_API_BASE;
+  }
 
   try {
     const apiHost = new URL(baseUrl).hostname;
     const isLocalApi = apiHost === "localhost" || apiHost === "127.0.0.1" || apiHost === "::1";
-    const isLocalBrowser = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-    return isLocalApi && !isLocalBrowser ? "" : baseUrl;
+    if (isLocalApi && !isLocalBrowser) {
+      return DEFAULT_PROD_API_BASE;
+    }
+    return baseUrl;
   } catch {
     return baseUrl;
   }
 }
 
 const API_BASE = getApiBaseUrl();
-const API_REQUEST_TIMEOUT_MS = 30_000;
+const API_REQUEST_TIMEOUT_MS = 60_000;
 
 type TokenGetter = () => Promise<string | null>;
 

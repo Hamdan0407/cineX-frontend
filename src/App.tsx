@@ -103,6 +103,9 @@ export default function App() {
   const [moviesUpcoming,   setMoviesUpcoming]   = useState<any[]>([]);
   const [loading,          setLoading]          = useState(true);
   const [apiError,         setApiError]         = useState(false);
+  const [nowPlayingError,  setNowPlayingError]  = useState("");
+  const [upcomingError,    setUpcomingError]    = useState("");
+  const [trendingError,    setTrendingError]    = useState("");
 
   // Filter state
   const [searchQuery,  setSearchQuery]  = useState("");
@@ -264,22 +267,34 @@ export default function App() {
     setCityCatalogError("");
     const lang = language && language !== "all" ? language : undefined;
     const langQuery = lang ? `&language=${encodeURIComponent(lang)}` : "";
-    return Promise.all([
+    return Promise.allSettled([
       api.get(`/api/shows/availability?city=${encodeURIComponent(city)}${langQuery}`, { skipAuth: true }),
       fetchBookableMovies(city, lang),
     ])
-      .then(([availabilityRes, bookableMovies]) => {
-        const tmdbIds: number[] = availabilityRes.data?.tmdbIds || [];
+      .then(([availabilityResult, bookableResult]) => {
+        let tmdbIds: number[] = [];
+        let languages: string[] = [];
+
+        if (availabilityResult.status === "fulfilled") {
+          tmdbIds = availabilityResult.value.data?.tmdbIds || [];
+          languages = availabilityResult.value.data?.languages || [];
+        }
         setCityBookableTmdbIds(new Set(tmdbIds.map((id) => Number(id))));
-        setCityLanguages(availabilityRes.data?.languages || []);
+        setCityLanguages(languages);
 
         const meta: Record<number, BookableMovieDto> = {};
-        (bookableMovies || []).forEach((movie) => {
-          if (movie?.tmdbId != null) {
-            meta[Number(movie.tmdbId)] = movie;
-          }
-        });
+        if (bookableResult.status === "fulfilled" && Array.isArray(bookableResult.value)) {
+          bookableResult.value.forEach((movie) => {
+            if (movie?.tmdbId != null) {
+              meta[Number(movie.tmdbId)] = movie;
+            }
+          });
+        }
         setCityBookableMeta(meta);
+
+        if (availabilityResult.status === "rejected" && bookableResult.status === "rejected") {
+          setCityCatalogError(`Unable to load shows for ${city}. Please try again.`);
+        }
       })
       .catch(() => {
         setCityCatalogError(`Unable to load shows for ${city}. Please try again.`);
@@ -314,6 +329,9 @@ export default function App() {
   const fetchAllMovies = useCallback(() => {
     setLoading(true);
     setApiError(false);
+    setNowPlayingError("");
+    setUpcomingError("");
+    setTrendingError("");
 
     Promise.allSettled([
       api.get("/api/movies", { skipAuth: true }),
@@ -341,26 +359,26 @@ export default function App() {
         const trending = tmdbTrending.length > 0 ? tmdbTrending : catalogDisplay;
         const upcoming = tmdbUpcoming.length > 0 ? tmdbUpcoming : catalogDisplay;
 
-        if (nowPlaying.length > 0) {
-          setMoviesNowPlaying(nowPlaying);
-        } else {
-          setMoviesNowPlaying([]);
+        setMoviesNowPlaying(nowPlaying);
+        setMoviesTrending(trending);
+        setMoviesUpcoming(upcoming);
+
+        // Track section-specific errors only if both primary and fallback sources failed for that section
+        if (nowPlaying.length === 0 && nowPlayingResult.status === "rejected" && catalogResult.status === "rejected") {
+          setNowPlayingError("Unable to load recommended movies right now.");
+        }
+        if (upcoming.length === 0 && upcomingResult.status === "rejected" && catalogResult.status === "rejected") {
+          setUpcomingError("Unable to load upcoming movies right now.");
+        }
+        if (trending.length === 0 && trendingResult.status === "rejected" && catalogResult.status === "rejected") {
+          setTrendingError("Unable to load trending movies right now.");
         }
 
-        if (trending.length > 0) {
-          setMoviesTrending(trending);
-        } else {
-          setMoviesTrending([]);
-        }
-
-        if (upcoming.length > 0) {
-          setMoviesUpcoming(upcoming);
-        } else {
-          setMoviesUpcoming([]);
-        }
-
-        const hasMovieData = nowPlaying.length > 0 || trending.length > 0 || upcoming.length > 0;
-        if (!hasMovieData) {
+        const allFailed = catalogResult.status === "rejected" &&
+                          nowPlayingResult.status === "rejected" &&
+                          trendingResult.status === "rejected" &&
+                          upcomingResult.status === "rejected";
+        if (allFailed && nowPlaying.length === 0 && trending.length === 0 && upcoming.length === 0) {
           setApiError(true);
         }
 
@@ -1568,7 +1586,7 @@ export default function App() {
 
       {/* ── Main Dashboard Content ── */}
       <main>
-        {apiError && (
+        {apiError && moviesNowPlaying.length === 0 && moviesUpcoming.length === 0 && moviesTrending.length === 0 && (
           <div className="cx-error-banner">
             Unable to load movies right now. Please try again.
           </div>
@@ -1730,8 +1748,8 @@ export default function App() {
                           ))}
                         </>
                       )}
-                      {!loading && apiError && moviesNowPlaying.length === 0 && (
-                        <p className="cx-empty-msg">Unable to load movies right now. Please try again.</p>
+                      {!loading && nowShowingMovies.length === 0 && nowPlayingError && (
+                        <p className="cx-empty-msg">{nowPlayingError}</p>
                       )}
                       {!loading && cityCatalogError && (
                         <p className="cx-empty-msg">{cityCatalogError}</p>
@@ -1775,8 +1793,8 @@ export default function App() {
                     </div>
                     <div className="cx-coming-list">
                       {loading && <p className="cx-empty-msg">Loading movies...</p>}
-                      {!loading && upcomingDisplay.length === 0 && (
-                        <p className="cx-empty-msg">Unable to load upcoming movies. Please try again.</p>
+                      {!loading && upcomingDisplay.length === 0 && upcomingError && (
+                        <p className="cx-empty-msg">{upcomingError}</p>
                       )}
                       {upcomingDisplay.slice(0, 4).map(m => (
                         <div key={m.id} className="cx-coming-card" onClick={() => handleMovieClick(m)}>
@@ -1799,8 +1817,8 @@ export default function App() {
                     </div>
                     <div className="cx-trending-grid">
                       {loading && <p className="cx-empty-msg">Loading trending movies...</p>}
-                      {!loading && trendingDisplay.length === 0 && (
-                        <p className="cx-empty-msg">Unable to load trending movies. Please try again.</p>
+                      {!loading && trendingDisplay.length === 0 && trendingError && (
+                        <p className="cx-empty-msg">{trendingError}</p>
                       )}
                       {trendingDisplay.slice(0, 3).map((m, idx) => (
                         <div key={m.id} className={`cx-trend-card ${idx === 0 ? "featured" : ""}`} onClick={() => handleMovieClick(m)}>
