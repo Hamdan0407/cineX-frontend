@@ -63,7 +63,7 @@ import {
   type BookableMovieDto,
   type TmdbCastMember,
 } from "./utils/movieUtils";
-import { isStaleHeldPoll, shouldDropLocalSelection } from "./utils/seatHoldSync";
+import { isStaleHeldPoll, shouldDropLocalSelection, shouldNotifyForSeatEvent } from "./utils/seatHoldSync";
 import { useDebounce } from "./utils/useDebounce";
 import { searchMoviesBackend } from "./services/cinemaApi";
 
@@ -915,9 +915,8 @@ export default function App() {
             setSelectedSeats(prev => prev.filter(seat =>
               !(typeof seat.seatId === "number" && expiredSelections.some(expired => expired.seatId === seat.seatId))
             ));
-            toast.warning("Seat hold expired", {
-              description: `${expiredSelections.map(seat => seat.id).join(", ")} was released. Please select again.`,
-            });
+            // Redis/Socket hold expiry is lifecycle state, not a second booking outcome.
+            // Deliberately do not emit a toast here: payment success owns the user feedback.
           }
         })
         .catch(err => {
@@ -1080,7 +1079,7 @@ export default function App() {
         setSelectedSeats(prev => prev.some(s => s.seatId === numId) ? prev : [...prev, { id, price, seatId: numId }]);
         try { sessionStorage.removeItem(SEAT_SESSION_KEY); } catch { /* ignore */ }
       }).catch(err => {
-        if (err.response?.status === 409) {
+        if (err.response?.status === 409 && shouldNotifyForSeatEvent("LOCK_CONFLICT")) {
           toast.warning("Seat Unavailable", { description: `Seat ${id} is currently held by another user. Please choose another seat.` });
         } else if (err.response?.status === 401) {
           toast.info("Sign in to select seats");

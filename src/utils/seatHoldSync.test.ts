@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isStaleHeldPoll, shouldDropLocalSelection } from "./seatHoldSync";
+import { isStaleHeldPoll, shouldDropLocalSelection, shouldNotifyForSeatEvent } from "./seatHoldSync";
 
 describe("seat hold sync", () => {
   it("ignores an in-flight held poll after a newer lock", () => {
@@ -23,5 +23,13 @@ describe("seat hold sync", () => {
       lockedAt: 1000,
       now: 20000,
     })).toBe(true);
+  });
+
+  it("keeps an internal hold release silent while the seat state is refreshed", () => {
+    expect(shouldNotifyForSeatEvent("HOLD_RELEASED")).toBe(false);
+  });
+
+  it("keeps a seat-lock conflict actionable", () => {
+    expect(shouldNotifyForSeatEvent("LOCK_CONFLICT")).toBe(true);
   });
 });

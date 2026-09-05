@@ -14,3 +14,8 @@ export function shouldDropLocalSelection(options: {
 export function isStaleHeldPoll(responseGeneration: number, currentGeneration: number): boolean {
   return responseGeneration !== currentGeneration;
 }
+
+/** Hold/release events refresh the seat map silently; failed user actions remain actionable. */
+export function shouldNotifyForSeatEvent(event: "HOLD_RELEASED" | "LOCK_CONFLICT"): boolean {
+  return event === "LOCK_CONFLICT";
+}
