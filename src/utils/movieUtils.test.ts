@@ -26,6 +26,7 @@ import {
   hasTmdbBackdrop,
   getTrailerObjectKeyForTmdbId,
   coerceJsonPayload,
+  mapCatalogMovieToDisplay,
 } from "./movieUtils";
 
 describe("resolveMovieBackdropUrl", () => {
@@ -131,6 +132,31 @@ describe("buildNowShowingDisplay", () => {
     const result = buildNowShowingDisplay(tmdbMovies, new Set(), {}, "all");
     expect(result.map((movie) => movie.tmdbId)).toEqual([100, 200]);
     expect(result.every((movie) => movie.id === movie.tmdbId)).toBe(true);
+  });
+});
+
+describe("mapCatalogMovieToDisplay", () => {
+  it("creates a card-ready fallback from the CineX catalog", () => {
+    expect(mapCatalogMovieToDisplay({
+      id: 42,
+      tmdbId: 1516698,
+      title: "The Last Sunrise",
+      description: "A summer in Mallorca.",
+      genre: "Romance",
+      duration: 120,
+      language: "English",
+      releaseDate: "2026-09-01",
+      posterPath: "/sunrise.jpg",
+      trailerObjectKey: "trailers/sunrise.mp4",
+    })).toMatchObject({
+      id: 1516698,
+      tmdbId: 1516698,
+      backendMovieId: 42,
+      title: "The Last Sunrise",
+      poster_path: "/sunrise.jpg",
+      genre_label: "Romance",
+      trailerObjectKey: "trailers/sunrise.mp4",
+    });
   });
 });
 

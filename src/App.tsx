@@ -54,6 +54,7 @@ import {
   getProductionCountries,
   extractTmdbGenres,
   enrichTmdbWithCatalog,
+  mapCatalogMovieToDisplay,
   parseTmdbCredits,
   parseTmdbPayload,
   mapTmdbSimilarMovie,
@@ -321,18 +322,24 @@ export default function App() {
       api.get("/api/tmdb/upcoming", { skipAuth: true }),
     ])
       .then(([catalogResult, nowPlayingResult, trendingResult, upcomingResult]) => {
-        const catalog = catalogResult.status === "fulfilled" ? (catalogResult.value.data || []) : [];
+        const catalog = catalogResult.status === "fulfilled" && Array.isArray(catalogResult.value.data)
+          ? catalogResult.value.data
+          : [];
         backendCatalogRef.current = catalog;
+        const catalogDisplay = catalog.map(mapCatalogMovieToDisplay);
 
-        const nowPlaying = nowPlayingResult.status === "fulfilled"
+        const tmdbNowPlaying = nowPlayingResult.status === "fulfilled"
           ? enrichTmdbWithCatalog(parseTmdbPayload(nowPlayingResult.value.data), catalog)
           : [];
-        const trending = trendingResult.status === "fulfilled"
+        const tmdbTrending = trendingResult.status === "fulfilled"
           ? enrichTmdbWithCatalog(parseTmdbPayload(trendingResult.value.data), catalog)
           : [];
-        const upcoming = upcomingResult.status === "fulfilled"
+        const tmdbUpcoming = upcomingResult.status === "fulfilled"
           ? enrichTmdbWithCatalog(parseTmdbPayload(upcomingResult.value.data), catalog)
           : [];
+        const nowPlaying = tmdbNowPlaying.length > 0 ? tmdbNowPlaying : catalogDisplay;
+        const trending = tmdbTrending.length > 0 ? tmdbTrending : catalogDisplay;
+        const upcoming = tmdbUpcoming.length > 0 ? tmdbUpcoming : catalogDisplay;
 
         if (nowPlaying.length > 0) {
           setMoviesNowPlaying(nowPlaying);
@@ -352,8 +359,8 @@ export default function App() {
           setMoviesUpcoming([]);
         }
 
-        const hasTmdbData = nowPlaying.length > 0 || trending.length > 0 || upcoming.length > 0;
-        if (!hasTmdbData) {
+        const hasMovieData = nowPlaying.length > 0 || trending.length > 0 || upcoming.length > 0;
+        if (!hasMovieData) {
           setApiError(true);
         }
 

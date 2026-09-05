@@ -419,6 +419,21 @@ export type BookableMovieDto = {
   formats?: string[];
 };
 
+/** The public CineX catalog response used when an optional TMDB feed is unavailable. */
+export type CatalogMovieDto = {
+  id: number;
+  tmdbId?: number | null;
+  title: string;
+  description?: string | null;
+  genre?: string | null;
+  duration?: number | null;
+  language?: string | null;
+  releaseDate?: string | null;
+  posterPath?: string | null;
+  trailerObjectKey?: string | null;
+  trailerPlaybackUrl?: string | null;
+};
+
 export const mapBookableToDisplay = (bookable: BookableMovieDto, tmdb?: any) => {
   const poster = tmdb?.poster_path || bookable.posterPath || null;
   const backdrop = tmdb?.backdrop_path || bookable.backdropPath || null;
@@ -479,6 +494,32 @@ export const TRAILER_OBJECT_KEYS_BY_TMDB_ID: Readonly<Record<number, string>> = 
   1516698: "trailers/The Last Sunrise - Official Trailer _ Prime Video.mp4",
   1368337: "trailers/The Odyssey _ Official New Trailer.mp4",
 };
+
+/**
+ * Keeps the home page usable when TMDB is temporarily unavailable but CineX's
+ * own movie catalog is healthy. TMDB remains the preferred source whenever it
+ * has results.
+ */
+export const mapCatalogMovieToDisplay = (movie: CatalogMovieDto) => ({
+  id: Number(movie.tmdbId ?? movie.id),
+  tmdbId: movie.tmdbId != null ? Number(movie.tmdbId) : undefined,
+  backendMovieId: Number(movie.id),
+  title: movie.title,
+  overview: movie.description || "",
+  poster_path: movie.posterPath || null,
+  backdrop_path: null,
+  vote_average: 0,
+  vote_count: 0,
+  genre_ids: [] as number[],
+  genre_label: movie.genre || "Cinema",
+  runtime: movie.duration || null,
+  release_date: movie.releaseDate || null,
+  original_language: movie.language || "en",
+  screeningLanguages: movie.language ? [movie.language] : [],
+  formats: ["2D"],
+  trailerPlaybackUrl: movie.trailerPlaybackUrl || null,
+  trailerObjectKey: movie.trailerObjectKey || null,
+});
 
 export const getTrailerObjectKeyForTmdbId = (tmdbId: number): string | null =>
   TRAILER_OBJECT_KEYS_BY_TMDB_ID[tmdbId] ?? null;
